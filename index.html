@@ -177,6 +177,8 @@
     taskIndex: 0,
     setNumber: 1,     // for strength tasks
     error: null,
+    alreadyLoggedToday: false,
+    confirmedRedo: false,
   };
 
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -247,6 +249,21 @@
     state.tasks = tasks;
     state.taskIndex = 0;
     state.setNumber = 1;
+
+    // Check whether today's workout already has any logged results for this user
+    // (RLS already scopes these queries to the signed-in user).
+    const wodSegIds = tasks.filter(t => t.type === 'wod').map(t => t.segment.id);
+    const strengthSegIds = tasks.filter(t => t.type === 'strength').map(t => t.segment.id);
+    let alreadyLogged = false;
+    if (wodSegIds.length) {
+      const { data } = await sb.from('wod_results').select('id').in('segment_id', wodSegIds).limit(1);
+      if (data && data.length) alreadyLogged = true;
+    }
+    if (!alreadyLogged && strengthSegIds.length) {
+      const { data } = await sb.from('strength_results').select('id').in('segment_id', strengthSegIds).limit(1);
+      if (data && data.length) alreadyLogged = true;
+    }
+    state.alreadyLoggedToday = alreadyLogged;
   }
 
   async function loadMovementHistory(movementId) {
@@ -273,19 +290,20 @@
 
   // ======================= WRITES =======================
   async function logStrengthSet(segMovementId, movementId, setNumber, reps, weight, notes) {
-    const { error } = await sb.from('strength_results').insert({
+    const { error } = await sb.from('strength_results').upsert({
       segment_id: state.tasks[state.taskIndex].segment.id,
       movement_id: movementId,
       set_number: setNumber,
       reps_completed: reps,
       weight_lbs: weight,
       notes: notes || null,
-    });
+    }, { onConflict: 'user_id,segment_id,movement_id,set_number' });
     if (error) throw error;
   }
 
   async function logWodResult(segmentId, payload) {
-    const { error } = await sb.from('wod_results').insert({ segment_id: segmentId, ...payload });
+    const { error } = await sb.from('wod_results')
+      .upsert({ segment_id: segmentId, ...payload }, { onConflict: 'user_id,segment_id' });
     if (error) throw error;
   }
 
@@ -486,6 +504,23 @@
     };
   }
 
+  // ======================= RENDER: ALREADY LOGGED GATE =======================
+  function renderAlreadyLogged() {
+    root.innerHTML = `
+      <div class="center-msg">
+        You've already logged results for ${esc(state.workout.workout_date)}.
+      </div>
+      <button class="log-btn" id="redoBtn" style="margin-top:30px;">Redo entry anyway</button>
+      <a href="summary.html" style="text-decoration:none;">
+        <button class="secondary-btn" style="width:100%;">View This Week</button>
+      </a>
+    `;
+    document.getElementById('redoBtn').onclick = () => {
+      state.confirmedRedo = true;
+      render();
+    };
+  }
+
   // ======================= RENDER: DONE =======================
   function renderDone() {
     root.innerHTML = `
@@ -507,6 +542,7 @@
       root.innerHTML = `<div class="center-msg">No workout found for today or recently.<br><br>Check that the nightly ingest job is running.</div>`;
       return;
     }
+    if (state.alreadyLoggedToday && !state.confirmedRedo) { renderAlreadyLogged(); return; }
     if (state.taskIndex >= state.tasks.length) { renderDone(); return; }
     const task = state.tasks[state.taskIndex];
     if (task.type === 'strength') renderStrength(task);
