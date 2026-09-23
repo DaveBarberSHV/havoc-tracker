@@ -1,0 +1,32 @@
+name: Nightly WOD Ingest
+
+on:
+  schedule:
+    # Cron is UTC only, and GitHub Actions cron does NOT observe daylight saving.
+    # 9:30pm ET is 01:30 UTC during EDT (Mar-Nov) and 02:30 UTC during EST (Nov-Mar).
+    # Two schedules below cover both; the script itself no-ops if the latest post
+    # isn't new, so an extra run causes no harm. Both are Tue-Sat UTC because
+    # 9:30pm Mon-Fri ET rolls into the next UTC day.
+    - cron: '30 1 * * 2-6'   # EDT covers: Mon-Fri 9:30pm ET
+    - cron: '30 2 * * 2-6'   # EST covers: Mon-Fri 9:30pm ET
+  workflow_dispatch: {}       # lets you trigger it manually from the Actions tab
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run nightly ingest
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: python3 scripts/nightly_ingest.py

@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Havoc Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #17181A;
+    --panel: #1F2124;
+    --panel-2: #26282C;
+    --chalk: #F2EFE9;
+    --chalk-dim: #A9A7A2;
+    --accent: #C1443B;
+    --accent-dim: #7A2C27;
+    --good: #7FA66B;
+    --bad: #C1443B;
+    --radius: 14px;
+    box-sizing: border-box;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    margin: 0;
+    background: var(--bg);
+    color: var(--chalk);
+    font-family: 'Barlow Condensed', ui-sans-serif, system-ui, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #root {
+    max-width: 480px;
+    margin: 0 auto;
+    min-height: 100%;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px calc(32px + env(safe-area-inset-bottom, 0px));
+    display: flex;
+    flex-direction: column;
+  }
+
+  h1, h2, h3, p { margin: 0; }
+
+  /* ---------- Shared ---------- */
+  .topline {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    color: var(--chalk-dim);
+    font-size: 18px;
+    letter-spacing: 0.02em;
+    margin-bottom: 4px;
+  }
+  .movement-name {
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1.05;
+    margin: 2px 0 2px;
+  }
+  .scheme {
+    color: var(--chalk-dim);
+    font-size: 22px;
+    margin-bottom: 22px;
+  }
+  .set-tabs { display: flex; gap: 8px; margin-bottom: 18px; }
+  .set-tab {
+    flex: 1; text-align: center; padding: 10px 0; border-radius: 10px;
+    background: var(--panel); color: var(--chalk-dim); font-size: 20px; font-weight: 600;
+    border: 2px solid transparent;
+  }
+  .set-tab.done { color: var(--chalk); }
+  .set-tab.active { border-color: var(--accent); color: var(--chalk); background: var(--panel-2); }
+
+  .entry-card {
+    background: var(--panel); border-radius: var(--radius); padding: 28px 16px 24px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+  }
+  .weight-row { display: flex; align-items: center; justify-content: center; gap: 18px; width: 100%; }
+  .stepper {
+    width: 64px; height: 64px; border-radius: 50%; background: var(--panel-2); color: var(--chalk);
+    font-size: 30px; font-weight: 700; border: none; display: flex; align-items: center;
+    justify-content: center; flex-shrink: 0; user-select: none;
+  }
+  .stepper:active { background: var(--accent-dim); }
+  .weight-display {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 76px; font-weight: 700;
+    min-width: 170px; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  }
+  .unit { color: var(--chalk-dim); font-size: 22px; margin-top: -4px; text-align: center; }
+
+  .context-line { margin-top: 18px; font-size: 21px; color: var(--chalk-dim); text-align: center; line-height: 1.5; }
+  .context-line .line2 { display: block; margin-top: 2px; }
+  .context-line b { color: var(--chalk); font-weight: 600; }
+  .pr-badge {
+    display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: var(--chalk);
+    font-size: 20px; font-weight: 700; padding: 5px 14px 6px; border-radius: 999px; margin-top: 10px;
+  }
+
+  .log-btn {
+    margin-top: 26px; width: 100%; padding: 20px 0; border-radius: 12px; border: none;
+    background: var(--accent); color: var(--chalk); font-family: 'Barlow Condensed', sans-serif;
+    font-size: 28px; font-weight: 700; letter-spacing: 0.01em;
+  }
+  .log-btn:active { background: var(--accent-dim); }
+  .log-btn:disabled { opacity: 0.5; }
+  .secondary-btn {
+    margin-top: 12px; width: 100%; padding: 14px 0; border-radius: 12px; border: 2px solid var(--panel-2);
+    background: transparent; color: var(--chalk-dim); font-family: 'Barlow Condensed', sans-serif;
+    font-size: 20px; font-weight: 600;
+  }
+
+  .prior-sessions { margin-top: 30px; }
+  .prior-title { font-size: 20px; color: var(--chalk-dim); margin-bottom: 10px; }
+  .prior-row {
+    display: flex; justify-content: space-between; padding: 10px 4px;
+    border-bottom: 1px solid var(--panel-2); font-size: 21px;
+  }
+  .prior-row .date { color: var(--chalk-dim); }
+  .prior-row .val { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  .note { margin-top: 28px; text-align: center; color: var(--chalk-dim); font-size: 16px; opacity: 0.7; }
+  .error-banner {
+    background: var(--accent-dim); color: var(--chalk); padding: 14px 16px; border-radius: 10px;
+    font-size: 18px; margin-bottom: 16px;
+  }
+  .center-msg { text-align: center; color: var(--chalk-dim); font-size: 22px; margin-top: 60px; line-height: 1.5; }
+
+  /* ---------- Auth screen ---------- */
+  .auth-wrap { display: flex; flex-direction: column; justify-content: center; flex: 1; gap: 18px; }
+  .auth-title { font-size: 44px; font-weight: 700; text-align: center; margin-bottom: 8px; }
+  .auth-sub { color: var(--chalk-dim); font-size: 20px; text-align: center; margin-bottom: 20px; }
+  input[type="email"], input[type="number"], input[type="text"] {
+    width: 100%; padding: 16px; border-radius: 10px; border: 2px solid var(--panel-2);
+    background: var(--panel); color: var(--chalk); font-size: 22px; font-family: 'JetBrains Mono', monospace;
+  }
+  input:focus { outline: none; border-color: var(--accent); }
+
+  /* ---------- WOD screen ---------- */
+  .score-row { display: flex; gap: 12px; width: 100%; margin-top: 10px; }
+  .score-field { flex: 1; text-align: center; }
+  .score-field label { display: block; color: var(--chalk-dim); font-size: 18px; margin-bottom: 6px; }
+  .score-field input { text-align: center; font-size: 32px; padding: 14px; }
+  .toggle-row { display: flex; gap: 8px; margin-top: 18px; width: 100%; }
+  .toggle-btn {
+    flex: 1; padding: 12px 0; border-radius: 10px; background: var(--panel-2); color: var(--chalk-dim);
+    border: 2px solid transparent; font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 600;
+  }
+  .toggle-btn.active { border-color: var(--accent); color: var(--chalk); }
+
+  .progress { color: var(--chalk-dim); font-size: 16px; margin-bottom: 8px; }
+</style>
+</head>
+<body>
+<div id="root"><div class="center-msg">Loading…</div></div>
+
+<script>
+  // ======================= CONFIG =======================
+  const SUPABASE_URL = 'https://cdnjaoqkxztmdiaetwgh.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_6bfDWvU8DPWpzCS96XCQXg_jJc2AV5z';
+  // ========================================================
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const root = document.getElementById('root');
+
+  let state = {
+    session: null,
+    workout: null,
+    tasks: [],       // flat queue: {type:'strength', segment, movement} or {type:'wod', segment}
+    taskIndex: 0,
+    setNumber: 1,     // for strength tasks
+    error: null,
+  };
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    return `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+  }
+  function parseLeadingInt(text) {
+    if (!text) return null;
+    const m = String(text).match(/(\d+)/);
+    return m ? parseInt(m[1], 10) : null;
+  }
+  function epley(weight, reps) { return weight * (1 + reps / 30); }
+
+  // ======================= AUTH =======================
+  async function init() {
+    const { data } = await sb.auth.getSession();
+    state.session = data.session;
+    sb.auth.onAuthStateChange((_event, session) => {
+      state.session = session;
+      render();
+    });
+    if (state.session) {
+      await loadTodaysWorkout();
+    }
+    render();
+  }
+
+  async function sendMagicLink(email) {
+    state.error = null;
+    const { error } = await sb.auth.signInWithOtp({
+      email, options: { emailRedirectTo: window.location.href }
+    });
+    if (error) { state.error = error.message; render(); return; }
+    state.error = null;
+    root.innerHTML = `<div class="auth-wrap"><div class="auth-title">Check your email</div>
+      <div class="auth-sub">Tap the link we sent to ${esc(email)} to sign in.</div></div>`;
+  }
+
+  // ======================= DATA LOADING =======================
+  async function loadTodaysWorkout() {
+    const today = new Date().toISOString().slice(0, 10);
+    const { data: workouts, error: wErr } = await sb
+      .from('workouts').select('*').lte('workout_date', today)
+      .order('workout_date', { ascending: false }).limit(1);
+    if (wErr) { state.error = wErr.message; return; }
+    if (!workouts || workouts.length === 0) { state.workout = null; return; }
+    state.workout = workouts[0];
+
+    const { data: segments, error: sErr } = await sb
+      .from('segments').select('*').eq('workout_id', state.workout.id).eq('source', 'havoc')
+      .order('segment_order');
+    if (sErr) { state.error = sErr.message; return; }
+
+    const tasks = [];
+    for (const seg of segments) {
+      if (seg.segment_type === 'strength') {
+        const { data: movs } = await sb
+          .from('segment_movements').select('*, movements(id, name)')
+          .eq('segment_id', seg.id).order('movement_order');
+        for (const m of (movs || [])) {
+          tasks.push({ type: 'strength', segment: seg, segMovement: m, movement: m.movements });
+        }
+      } else if (seg.segment_type === 'wod') {
+        tasks.push({ type: 'wod', segment: seg });
+      }
+    }
+    state.tasks = tasks;
+    state.taskIndex = 0;
+    state.setNumber = 1;
+  }
+
+  async function loadMovementHistory(movementId) {
+    const { data, error } = await sb
+      .from('strength_results').select('reps_completed, weight_lbs, logged_at')
+      .eq('movement_id', movementId).order('logged_at', { ascending: false }).limit(5);
+    if (error) { state.error = error.message; return { recent: [], best1RM: null, bestSource: null }; }
+    const recent = data || [];
+    let best1RM = null, bestSource = null;
+    // Look across full history for the 1RM record, not just the last 5 shown
+    const { data: allRows } = await sb
+      .from('strength_results').select('reps_completed, weight_lbs')
+      .eq('movement_id', movementId).not('weight_lbs', 'is', null).not('reps_completed', 'is', null);
+    for (const row of (allRows || [])) {
+      if (!row.weight_lbs || !row.reps_completed) continue;
+      const est = epley(row.weight_lbs, row.reps_completed);
+      if (best1RM === null || est > best1RM) {
+        best1RM = est;
+        bestSource = row.reps_completed === 1 ? 'actual' : 'calculated';
+      }
+    }
+    return { recent, best1RM, bestSource };
+  }
+
+  // ======================= WRITES =======================
+  async function logStrengthSet(segMovementId, movementId, setNumber, reps, weight) {
+    const { error } = await sb.from('strength_results').insert({
+      segment_id: state.tasks[state.taskIndex].segment.id,
+      movement_id: movementId,
+      set_number: setNumber,
+      reps_completed: reps,
+      weight_lbs: weight,
+    });
+    if (error) throw error;
+  }
+
+  async function logWodResult(segmentId, payload) {
+    const { error } = await sb.from('wod_results').insert({ segment_id: segmentId, ...payload });
+    if (error) throw error;
+  }
+
+  // ======================= RENDER: AUTH SCREEN =======================
+  function renderAuth() {
+    root.innerHTML = `
+      <div class="auth-wrap">
+        <div class="auth-title">Havoc Tracker</div>
+        <div class="auth-sub">Sign in with your email — we'll send a magic link, no password needed.</div>
+        ${state.error ? `<div class="error-banner">${esc(state.error)}</div>` : ''}
+        <input type="email" id="emailInput" placeholder="you@example.com" autocomplete="email">
+        <button class="log-btn" id="sendLinkBtn">Send magic link</button>
+      </div>`;
+    document.getElementById('sendLinkBtn').onclick = () => {
+      const email = document.getElementById('emailInput').value.trim();
+      if (email) sendMagicLink(email);
+    };
+  }
+
+  // ======================= RENDER: STRENGTH TASK =======================
+  async function renderStrength(task) {
+    root.innerHTML = `<div class="center-msg">Loading movement…</div>`;
+    const prescribedSets = task.segMovement.prescribed_sets || 1;
+    const prescribedReps = parseLeadingInt(task.segMovement.prescribed_reps) || null;
+    const { recent, best1RM, bestSource } = await loadMovementHistory(task.movement.id);
+
+    let weight = recent.length ? Math.round(recent[0].weight_lbs || 0) : 0;
+
+    function draw() {
+      const tabsHtml = Array.from({ length: prescribedSets }, (_, i) => {
+        const n = i + 1;
+        const cls = n < state.setNumber ? 'done' : (n === state.setNumber ? 'active' : '');
+        return `<div class="set-tab ${cls}">${n}</div>`;
+      }).join('');
+
+      const lastLine = recent.length
+        ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps @ ${recent[0].weight_lbs ?? '?'} lb`
+        : `No sessions logged yet`;
+      const ormLine = best1RM
+        ? `1RM = ${Math.round(best1RM)} lb (${bestSource})`
+        : `1RM = Unknown`;
+
+      const estToday = prescribedReps ? epley(weight, prescribedReps) : weight;
+      const isPR = best1RM !== null && estToday > best1RM;
+
+      const priorRows = recent.map(r =>
+        `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps @ ${r.weight_lbs ?? '?'} lb</span></div>`
+      ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
+
+      root.innerHTML = `
+        <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
+        <div class="topline">
+          <span>${esc(state.workout.workout_date)} &middot; Strength</span>
+          <span>${state.setNumber} / ${prescribedSets} sets</span>
+        </div>
+        <div class="movement-name">${esc(task.movement.name)}</div>
+        <div class="scheme">${esc(task.segMovement.prescribed_reps || '')}${task.segMovement.prescribed_scheme ? ' &middot; ' + esc(task.segMovement.prescribed_scheme) : ''}</div>
+        <div class="set-tabs">${tabsHtml}</div>
+        <div class="entry-card">
+          <div class="weight-row">
+            <button class="stepper" id="decBtn">−</button>
+            <div>
+              <div class="weight-display" id="weightVal">${weight}</div>
+              <div class="unit">lb</div>
+            </div>
+            <button class="stepper" id="incBtn">+</button>
+          </div>
+          <div class="context-line">${lastLine}<span class="line2">${ormLine}</span></div>
+          <div class="pr-badge" style="display:${isPR ? 'inline-flex' : 'none'}">🏆 New est. 1RM PR</div>
+        </div>
+        ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
+        <button class="log-btn" id="logBtn">Log set &amp; next →</button>
+        <div class="prior-sessions">
+          <div class="prior-title">${esc(task.movement.name)} — last ${recent.length} session(s), any rep count</div>
+          ${priorRows}
+        </div>
+      `;
+      document.getElementById('decBtn').onclick = () => { weight = Math.max(0, weight - 5); draw(); };
+      document.getElementById('incBtn').onclick = () => { weight = weight + 5; draw(); };
+      document.getElementById('logBtn').onclick = async () => {
+        document.getElementById('logBtn').disabled = true;
+        try {
+          await logStrengthSet(task.segMovement.id, task.movement.id, state.setNumber, prescribedReps, weight);
+          state.error = null;
+          if (state.setNumber < prescribedSets) {
+            state.setNumber += 1;
+            renderStrength(task);
+          } else {
+            state.taskIndex += 1;
+            state.setNumber = 1;
+            render();
+          }
+        } catch (e) {
+          state.error = e.message;
+          draw();
+        }
+      };
+    }
+    draw();
+  }
+
+  // ======================= RENDER: WOD TASK =======================
+  function renderWod(task) {
+    const seg = task.segment;
+    let scoreType = seg.score_type;
+    let rxState = 'rx';
+
+    function fieldsHtml() {
+      if (scoreType === 'time') {
+        return `<div class="score-row">
+          <div class="score-field"><label>Minutes</label><input type="number" id="minInput" value="10" min="0"></div>
+          <div class="score-field"><label>Seconds</label><input type="number" id="secInput" value="0" min="0" max="59"></div>
+        </div>`;
+      }
+      if (scoreType === 'rounds_reps') {
+        return `<div class="score-row">
+          <div class="score-field"><label>Rounds</label><input type="number" id="roundsInput" value="0" min="0"></div>
+          <div class="score-field"><label>+ Reps</label><input type="number" id="extraInput" value="0" min="0"></div>
+        </div>`;
+      }
+      if (scoreType === 'reps') {
+        return `<div class="score-row"><div class="score-field"><label>Total reps</label><input type="number" id="repsInput" value="0" min="0"></div></div>`;
+      }
+      if (scoreType === 'calories') {
+        return `<div class="score-row"><div class="score-field"><label>Calories</label><input type="number" id="calInput" value="0" min="0"></div></div>`;
+      }
+      if (scoreType === 'distance') {
+        return `<div class="score-row"><div class="score-field"><label>Distance</label><input type="text" id="distInput" placeholder="e.g. 5000m"></div></div>`;
+      }
+      return `<div class="context-line">No score to log for this one — just mark it done.</div>`;
+    }
+
+    root.innerHTML = `
+      <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
+      <div class="topline"><span>${esc(state.workout.workout_date)} &middot; WOD</span></div>
+      <div class="movement-name">${esc(seg.title || 'WOD')}</div>
+      <div class="scheme">${esc(seg.structure_type || '')}</div>
+      <div class="entry-card">
+        ${fieldsHtml()}
+        <div class="toggle-row">
+          <button class="toggle-btn active" data-rx="rx">Rx</button>
+          <button class="toggle-btn" data-rx="scaled">Scaled</button>
+        </div>
+      </div>
+      ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
+      <button class="log-btn" id="logWodBtn">Log result &amp; next →</button>
+    `;
+
+    root.querySelectorAll('.toggle-btn').forEach(btn => {
+      btn.onclick = () => {
+        rxState = btn.dataset.rx;
+        root.querySelectorAll('.toggle-btn').forEach(b => b.classList.toggle('active', b === btn));
+      };
+    });
+
+    document.getElementById('logWodBtn').onclick = async () => {
+      document.getElementById('logWodBtn').disabled = true;
+      const payload = { score_type: scoreType, rx_or_scaled: rxState };
+      if (scoreType === 'time') {
+        const min = parseInt(document.getElementById('minInput').value || '0', 10);
+        const sec = parseInt(document.getElementById('secInput').value || '0', 10);
+        payload.time_seconds = min * 60 + sec;
+      } else if (scoreType === 'rounds_reps') {
+        payload.rounds_completed = parseInt(document.getElementById('roundsInput').value || '0', 10);
+        payload.extra_reps = parseInt(document.getElementById('extraInput').value || '0', 10);
+      } else if (scoreType === 'reps') {
+        payload.total_reps = parseInt(document.getElementById('repsInput').value || '0', 10);
+      } else if (scoreType === 'calories') {
+        payload.calories = parseInt(document.getElementById('calInput').value || '0', 10);
+      } else if (scoreType === 'distance') {
+        payload.distance_value = null;
+        payload.notes = document.getElementById('distInput').value || null;
+      }
+      try {
+        await logWodResult(seg.id, payload);
+        state.error = null;
+        state.taskIndex += 1;
+        render();
+      } catch (e) {
+        state.error = e.message;
+        renderWod(task);
+      }
+    };
+  }
+
+  // ======================= RENDER: DONE =======================
+  function renderDone() {
+    root.innerHTML = `
+      <div class="center-msg">
+        ✅<br><br>
+        Workout logged for ${esc(state.workout.workout_date)}.<br><br>
+        Nice work.
+      </div>
+      <button class="secondary-btn" id="signOutBtn" style="margin-top:40px;">Sign out</button>
+    `;
+    document.getElementById('signOutBtn').onclick = async () => { await sb.auth.signOut(); state.session = null; render(); };
+  }
+
+  // ======================= MAIN RENDER =======================
+  function render() {
+    if (!state.session) { renderAuth(); return; }
+    if (!state.workout) {
+      root.innerHTML = `<div class="center-msg">No workout found for today or recently.<br><br>Check that the nightly ingest job is running.</div>`;
+      return;
+    }
+    if (state.taskIndex >= state.tasks.length) { renderDone(); return; }
+    const task = state.tasks[state.taskIndex];
+    if (task.type === 'strength') renderStrength(task);
+    else if (task.type === 'wod') renderWod(task);
+  }
+
+  init();
+</script>
+</body>
+</html>

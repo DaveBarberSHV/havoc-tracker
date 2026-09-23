@@ -1,0 +1,143 @@
+[
+  {
+    "workout_date": "2026-09-17",
+    "source_title": "WOD Thursday September 17th",
+    "raw_text": "Warm up: 200 Meter Jog / Empty Bar Snatch Warm up\n\n1. Every 30 Seconds for 10 Sets:\n1 Hang Full Snatch...\n\n2. Every 1:30 for 10 Sets:\n1 Full Snatch (Increase weight as you go)\n\n3. For Time:\n50 Calorie Bike",
+    "parsed": {
+      "segments": [
+        {
+          "segment_order": 1,
+          "segment_type": "warmup",
+          "title": "Warm up",
+          "structure_type": "none",
+          "score_type": "none",
+          "movements": [
+            {"name": "Jog", "movement_order": 1, "prescribed_reps": "200 Meter", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Snatch", "movement_order": 2, "prescribed_reps": "empty bar", "prescribed_sets": null, "prescribed_scheme": "warm up"}
+          ],
+          "notes": null
+        },
+        {
+          "segment_order": 2,
+          "segment_type": "strength",
+          "title": "Hang Full Snatch",
+          "structure_type": "emom",
+          "score_type": "load",
+          "movements": [
+            {"name": "Hang Full Snatch", "movement_order": 1, "prescribed_reps": "1", "prescribed_sets": 10, "prescribed_scheme": "Every 30 seconds for 10 sets, light warm up weight, focus on full extension and speed under the bar"}
+          ],
+          "notes": "Lead-in to the main snatch work, lighter than segment 3"
+        },
+        {
+          "segment_order": 3,
+          "segment_type": "strength",
+          "title": "Full Snatch",
+          "structure_type": "emom",
+          "score_type": "load",
+          "movements": [
+            {"name": "Full Snatch", "movement_order": 1, "prescribed_reps": "1", "prescribed_sets": 10, "prescribed_scheme": "Every 1:30 for 10 sets, increase weight as you go"}
+          ],
+          "notes": null
+        },
+        {
+          "segment_order": 4,
+          "segment_type": "wod",
+          "title": "50 Cal Bike",
+          "structure_type": "for_time",
+          "score_type": "time",
+          "movements": [
+            {"name": "Bike", "movement_order": 1, "prescribed_reps": "50 cal", "prescribed_sets": null, "prescribed_scheme": "For time"}
+          ],
+          "notes": null
+        }
+      ]
+    }
+  },
+  {
+    "workout_date": "2026-09-16",
+    "source_title": "WOD Wednesday September 16th",
+    "raw_text": "Warm up: 1 Minute on Bike / 10 Air Squats / 10 Sit ups / 10 Ring Rows / 10 Push ups\n\nFor Time: 100 Walking Lunges, 100 Kettlebell Swings, 100 Mountain Climbers, 100 Wallballs, 100 Calorie Row",
+    "parsed": {
+      "segments": [
+        {
+          "segment_order": 1,
+          "segment_type": "warmup",
+          "title": "Warm up",
+          "structure_type": "none",
+          "score_type": "none",
+          "movements": [
+            {"name": "Bike", "movement_order": 1, "prescribed_reps": "1 minute", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Air Squat", "movement_order": 2, "prescribed_reps": "10", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Sit-up", "movement_order": 3, "prescribed_reps": "10", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Ring Row", "movement_order": 4, "prescribed_reps": "10", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Push-up", "movement_order": 5, "prescribed_reps": "10", "prescribed_sets": null, "prescribed_scheme": null}
+          ],
+          "notes": null
+        },
+        {
+          "segment_order": 2,
+          "segment_type": "wod",
+          "title": "100s For Time",
+          "structure_type": "for_time",
+          "score_type": "time",
+          "movements": [
+            {"name": "Walking Lunge", "movement_order": 1, "prescribed_reps": "100", "prescribed_sets": null, "prescribed_scheme": "Break up however you like"},
+            {"name": "Kettlebell Swing", "movement_order": 2, "prescribed_reps": "100", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Mountain Climber", "movement_order": 3, "prescribed_reps": "100", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Wallball", "movement_order": 4, "prescribed_reps": "100", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Row", "movement_order": 5, "prescribed_reps": "100 cal", "prescribed_sets": null, "prescribed_scheme": null}
+          ],
+          "notes": "No strength/weightlifting segment this day"
+        }
+      ]
+    }
+  },
+  {
+    "workout_date": "2026-09-15",
+    "source_title": "WOD Tuesday September 15th",
+    "raw_text": "Warm up: 50Ft Bear Crawl / 10 Hand Release Push ups / 50Ft Broad Jumps / 10 Sit ups\n\n1. For 5 Sets: 3 Push Press, 5 Kneeling Squat Jumps\n\n2. AMRAP 16: 8 Pull ups, 4 Burpee Box Jump Overs, 2 Clean and Jerks",
+    "parsed": {
+      "segments": [
+        {
+          "segment_order": 1,
+          "segment_type": "warmup",
+          "title": "Warm up",
+          "structure_type": "none",
+          "score_type": "none",
+          "movements": [
+            {"name": "Bear Crawl", "movement_order": 1, "prescribed_reps": "50ft", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Hand Release Push-up", "movement_order": 2, "prescribed_reps": "10", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Broad Jump", "movement_order": 3, "prescribed_reps": "50ft", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Sit-up", "movement_order": 4, "prescribed_reps": "10", "prescribed_sets": null, "prescribed_scheme": null}
+          ],
+          "notes": null
+        },
+        {
+          "segment_order": 2,
+          "segment_type": "strength",
+          "title": "Push Press",
+          "structure_type": "sets_reps",
+          "score_type": "load",
+          "movements": [
+            {"name": "Push Press", "movement_order": 1, "prescribed_reps": "3", "prescribed_sets": 5, "prescribed_scheme": "Increase weight as you go"},
+            {"name": "Kneeling Squat Jump", "movement_order": 2, "prescribed_reps": "5", "prescribed_sets": 5, "prescribed_scheme": null}
+          ],
+          "notes": null
+        },
+        {
+          "segment_order": 3,
+          "segment_type": "wod",
+          "title": "AMRAP 16",
+          "structure_type": "amrap",
+          "score_type": "rounds_reps",
+          "movements": [
+            {"name": "Pull-up", "movement_order": 1, "prescribed_reps": "8", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Burpee Box Jump Over", "movement_order": 2, "prescribed_reps": "4", "prescribed_sets": null, "prescribed_scheme": null},
+            {"name": "Clean And Jerk", "movement_order": 3, "prescribed_reps": "2", "prescribed_sets": null, "prescribed_scheme": null}
+          ],
+          "notes": null
+        }
+      ]
+    }
+  }
+]
