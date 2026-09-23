@@ -120,6 +120,11 @@
   .prior-row .val { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-variant-numeric: tabular-nums; }
 
   .note { margin-top: 28px; text-align: center; color: var(--chalk-dim); font-size: 16px; opacity: 0.7; }
+  .notes-field { width: 100%; margin-top: 18px; }
+  .notes-field label { display: block; color: var(--chalk-dim); font-size: 17px; margin-bottom: 6px; }
+  .notes-field input {
+    font-family: 'Barlow Condensed', sans-serif; font-size: 18px; padding: 12px 14px;
+  }
   .error-banner {
     background: var(--accent-dim); color: var(--chalk); padding: 14px 16px; border-radius: 10px;
     font-size: 18px; margin-bottom: 16px;
@@ -265,13 +270,14 @@
   }
 
   // ======================= WRITES =======================
-  async function logStrengthSet(segMovementId, movementId, setNumber, reps, weight) {
+  async function logStrengthSet(segMovementId, movementId, setNumber, reps, weight, notes) {
     const { error } = await sb.from('strength_results').insert({
       segment_id: state.tasks[state.taskIndex].segment.id,
       movement_id: movementId,
       set_number: setNumber,
       reps_completed: reps,
       weight_lbs: weight,
+      notes: notes || null,
     });
     if (error) throw error;
   }
@@ -349,6 +355,10 @@
           <div class="pr-badge" style="display:${isPR ? 'inline-flex' : 'none'}">🏆 New est. 1RM PR</div>
         </div>
         ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
+        <div class="notes-field">
+          <label for="notesInput">Notes (optional)</label>
+          <input type="text" id="notesInput" placeholder="e.g. used straps, felt heavy">
+        </div>
         <button class="log-btn" id="logBtn">Log set &amp; next →</button>
         <div class="prior-sessions">
           <div class="prior-title">${esc(task.movement.name)} — last ${recent.length} session(s), any rep count</div>
@@ -359,8 +369,9 @@
       document.getElementById('incBtn').onclick = () => { weight = weight + 5; draw(); };
       document.getElementById('logBtn').onclick = async () => {
         document.getElementById('logBtn').disabled = true;
+        const noteVal = document.getElementById('notesInput').value.trim() || null;
         try {
-          await logStrengthSet(task.segMovement.id, task.movement.id, state.setNumber, prescribedReps, weight);
+          await logStrengthSet(task.segMovement.id, task.movement.id, state.setNumber, prescribedReps, weight, noteVal);
           state.error = null;
           if (state.setNumber < prescribedSets) {
             state.setNumber += 1;
@@ -423,6 +434,10 @@
         </div>
       </div>
       ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
+      <div class="notes-field">
+        <label for="wodNotesInput">Notes (optional)</label>
+        <input type="text" id="wodNotesInput" placeholder="e.g. used 135 lb on the snatch">
+      </div>
       <button class="log-btn" id="logWodBtn">Log result &amp; next →</button>
     `;
 
@@ -436,6 +451,7 @@
     document.getElementById('logWodBtn').onclick = async () => {
       document.getElementById('logWodBtn').disabled = true;
       const payload = { score_type: scoreType, rx_or_scaled: rxState };
+      const generalNote = document.getElementById('wodNotesInput').value.trim();
       if (scoreType === 'time') {
         const min = parseInt(document.getElementById('minInput').value || '0', 10);
         const sec = parseInt(document.getElementById('secInput').value || '0', 10);
@@ -447,10 +463,13 @@
         payload.total_reps = parseInt(document.getElementById('repsInput').value || '0', 10);
       } else if (scoreType === 'calories') {
         payload.calories = parseInt(document.getElementById('calInput').value || '0', 10);
-      } else if (scoreType === 'distance') {
-        payload.distance_value = null;
-        payload.notes = document.getElementById('distInput').value || null;
       }
+      let distNote = null;
+      if (scoreType === 'distance') {
+        const dv = document.getElementById('distInput').value.trim();
+        if (dv) distNote = `Distance: ${dv}`;
+      }
+      payload.notes = [distNote, generalNote].filter(Boolean).join(' — ') || null;
       try {
         await logWodResult(seg.id, payload);
         state.error = null;
