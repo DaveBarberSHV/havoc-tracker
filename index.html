@@ -153,8 +153,22 @@
   }
   .toggle-btn.active { border-color: var(--accent); color: var(--chalk); }
 
-  .header-nav { display: flex; justify-content: flex-end; margin-bottom: -6px; }
+  .header-nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: -6px; }
   .header-nav a { color: var(--chalk-dim); font-size: 18px; text-decoration: none; }
+  .nav-link-btn {
+    background: none; border: none; color: var(--chalk-dim); font-size: 18px;
+    font-family: 'Barlow Condensed', sans-serif; padding: 0; text-decoration: underline;
+  }
+  .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 12px; }
+  .day-pick-list { display: flex; flex-direction: column; gap: 8px; }
+  .day-pick-row {
+    background: var(--panel); border: none; border-radius: 10px; padding: 14px 16px;
+    display: flex; justify-content: space-between; align-items: center; width: 100%;
+    color: var(--chalk); font-family: 'Barlow Condensed', sans-serif; text-align: left;
+  }
+  .day-pick-row:active { background: var(--panel-2); }
+  .day-pick-row .dp-date { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 600; }
+  .day-pick-row .dp-title { color: var(--chalk-dim); font-size: 16px; text-align: right; }
   .progress { color: var(--chalk-dim); font-size: 16px; margin-bottom: 8px; }
 </style>
 </head>
@@ -202,7 +216,7 @@
       render();
     });
     if (state.session) {
-      await loadTodaysWorkout();
+      await loadWorkoutForDate(new Date().toISOString().slice(0, 10));
     }
     render();
   }
@@ -219,10 +233,9 @@
   }
 
   // ======================= DATA LOADING =======================
-  async function loadTodaysWorkout() {
-    const today = new Date().toISOString().slice(0, 10);
+  async function loadWorkoutForDate(dateStr) {
     const { data: workouts, error: wErr } = await sb
-      .from('workouts').select('*').lte('workout_date', today)
+      .from('workouts').select('*').lte('workout_date', dateStr)
       .order('workout_date', { ascending: false }).limit(1);
     if (wErr) { state.error = wErr.message; return; }
     if (!workouts || workouts.length === 0) { state.workout = null; return; }
@@ -307,7 +320,45 @@
     if (error) throw error;
   }
 
-  // ======================= RENDER: AUTH SCREEN =======================
+  function navBarHtml() {
+    return `<div class="header-nav"><button class="nav-link-btn" id="changeDayBtn" type="button">Change day</button><a href="summary.html">This Week →</a></div>`;
+  }
+  function wireNavBar() {
+    const btn = document.getElementById('changeDayBtn');
+    if (btn) btn.onclick = () => renderDayPicker();
+  }
+
+  async function renderDayPicker() {
+    root.innerHTML = `<div class="center-msg">Loading recent days…</div>`;
+    const { data: recentWorkouts, error } = await sb
+      .from('workouts').select('id, workout_date, source_title')
+      .order('workout_date', { ascending: false }).limit(10);
+    if (error) { root.innerHTML = `<div class="error-banner">${esc(error.message)}</div>`; return; }
+
+    const rows = (recentWorkouts || []).map(w => `
+      <button class="day-pick-row" data-date="${esc(w.workout_date)}">
+        <span class="dp-date">${w.workout_date}</span>
+        <span class="dp-title">${esc(w.source_title || '')}</span>
+      </button>`).join('');
+
+    root.innerHTML = `
+      <div class="page-title" style="font-size:32px;">Pick a day</div>
+      <div class="scheme" style="margin-bottom:16px;">Choose a day to log or review</div>
+      <div class="day-pick-list">${rows}</div>
+      <button class="secondary-btn" id="cancelPickBtn" style="margin-top:16px;">Cancel</button>
+    `;
+    root.querySelectorAll('.day-pick-row').forEach(btn => {
+      btn.onclick = async () => {
+        root.innerHTML = `<div class="center-msg">Loading…</div>`;
+        await loadWorkoutForDate(btn.dataset.date);
+        state.confirmedRedo = false;
+        render();
+      };
+    });
+    document.getElementById('cancelPickBtn').onclick = () => render();
+  }
+
+
   function renderAuth() {
     root.innerHTML = `
       <div class="auth-wrap">
@@ -354,7 +405,7 @@
       ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
 
       root.innerHTML = `
-        <div class="header-nav"><a href="summary.html">This Week →</a></div>
+        ${navBarHtml()}
         <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
         <div class="topline">
           <span>${esc(state.workout.workout_date)} &middot; Strength</span>
@@ -386,6 +437,7 @@
           ${priorRows}
         </div>
       `;
+      wireNavBar();
       document.getElementById('decBtn').onclick = () => { weight = Math.max(0, weight - 5); draw(); };
       document.getElementById('incBtn').onclick = () => { weight = weight + 5; draw(); };
       document.getElementById('logBtn').onclick = async () => {
@@ -443,7 +495,7 @@
     }
 
     root.innerHTML = `
-      <div class="header-nav"><a href="summary.html">This Week →</a></div>
+      ${navBarHtml()}
       <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
       <div class="topline"><span>${esc(state.workout.workout_date)} &middot; WOD</span></div>
       <div class="movement-name">${esc(seg.title || 'WOD')}</div>
@@ -462,6 +514,7 @@
       </div>
       <button class="log-btn" id="logWodBtn">Log result &amp; next →</button>
     `;
+    wireNavBar();
 
     root.querySelectorAll('.toggle-btn').forEach(btn => {
       btn.onclick = () => {
@@ -507,6 +560,7 @@
   // ======================= RENDER: ALREADY LOGGED GATE =======================
   function renderAlreadyLogged() {
     root.innerHTML = `
+      ${navBarHtml()}
       <div class="center-msg">
         You've already logged results for ${esc(state.workout.workout_date)}.
       </div>
@@ -515,6 +569,7 @@
         <button class="secondary-btn" style="width:100%;">View This Week</button>
       </a>
     `;
+    wireNavBar();
     document.getElementById('redoBtn').onclick = () => {
       state.confirmedRedo = true;
       render();
@@ -524,7 +579,7 @@
   // ======================= RENDER: DONE =======================
   function renderDone() {
     root.innerHTML = `
-      <div class="header-nav"><a href="summary.html">This Week →</a></div>
+      ${navBarHtml()}
       <div class="center-msg">
         ✅<br><br>
         Workout logged for ${esc(state.workout.workout_date)}.<br><br>
@@ -532,6 +587,7 @@
       </div>
       <button class="secondary-btn" id="signOutBtn" style="margin-top:40px;">Sign out</button>
     `;
+    wireNavBar();
     document.getElementById('signOutBtn').onclick = async () => { await sb.auth.signOut(); state.session = null; render(); };
   }
 
@@ -539,7 +595,8 @@
   function render() {
     if (!state.session) { renderAuth(); return; }
     if (!state.workout) {
-      root.innerHTML = `<div class="center-msg">No workout found for today or recently.<br><br>Check that the nightly ingest job is running.</div>`;
+      root.innerHTML = `${navBarHtml()}<div class="center-msg">No workout found for today or recently.<br><br>Check that the nightly ingest job is running, or pick an earlier day.</div>`;
+      wireNavBar();
       return;
     }
     if (state.alreadyLoggedToday && !state.confirmedRedo) { renderAlreadyLogged(); return; }
