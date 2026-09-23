@@ -153,6 +153,8 @@
   }
   .toggle-btn.active { border-color: var(--accent); color: var(--chalk); }
 
+  .header-nav { display: flex; justify-content: flex-end; margin-bottom: -6px; }
+  .header-nav a { color: var(--chalk-dim); font-size: 18px; text-decoration: none; }
   .progress { color: var(--chalk-dim); font-size: 16px; margin-bottom: 8px; }
 </style>
 </head>
@@ -334,6 +336,7 @@
       ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
 
       root.innerHTML = `
+        <div class="header-nav"><a href="summary.html">This Week →</a></div>
         <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
         <div class="topline">
           <span>${esc(state.workout.workout_date)} &middot; Strength</span>
@@ -422,6 +425,7 @@
     }
 
     root.innerHTML = `
+      <div class="header-nav"><a href="summary.html">This Week →</a></div>
       <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
       <div class="topline"><span>${esc(state.workout.workout_date)} &middot; WOD</span></div>
       <div class="movement-name">${esc(seg.title || 'WOD')}</div>
@@ -485,6 +489,7 @@
   // ======================= RENDER: DONE =======================
   function renderDone() {
     root.innerHTML = `
+      <div class="header-nav"><a href="summary.html">This Week →</a></div>
       <div class="center-msg">
         ✅<br><br>
         Workout logged for ${esc(state.workout.workout_date)}.<br><br>

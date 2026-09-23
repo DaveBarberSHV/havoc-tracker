@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Havoc Tracker — This Week</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #17181A; --panel: #1F2124; --panel-2: #26282C; --chalk: #F2EFE9; --chalk-dim: #A9A7A2;
+    --accent: #C1443B; --accent-dim: #7A2C27; --good: #7FA66B; --radius: 14px; box-sizing: border-box;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--chalk);
+    font-family: 'Barlow Condensed', ui-sans-serif, system-ui, sans-serif; }
+  #root { max-width: 520px; margin: 0 auto; min-height: 100%;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px calc(32px + env(safe-area-inset-bottom, 0px)); }
+  h1, h2, h3, p { margin: 0; }
+
+  .header-row { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 4px; }
+  .back-link { color: var(--chalk-dim); font-size: 18px; text-decoration: none; }
+  .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 2px; }
+  .date-range { color: var(--chalk-dim); font-size: 20px; margin-bottom: 18px; }
+
+  .stat-row { display: flex; gap: 12px; margin-bottom: 22px; }
+  .stat-card { flex: 1; background: var(--panel); border-radius: var(--radius); padding: 16px; text-align: center; }
+  .stat-num { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-label { color: var(--chalk-dim); font-size: 16px; margin-top: 2px; }
+
+  .pr-section { margin-bottom: 22px; }
+  .pr-card {
+    background: var(--accent); color: var(--chalk); border-radius: 12px; padding: 14px 16px;
+    margin-bottom: 8px; font-size: 20px; font-weight: 600;
+  }
+  .pr-card .sub { display: block; font-size: 16px; font-weight: 500; opacity: 0.9; margin-top: 2px; }
+
+  .day-card {
+    background: var(--panel); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px;
+  }
+  .day-card.empty { opacity: 0.55; }
+  .day-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .day-name { font-size: 24px; font-weight: 700; }
+  .day-date { color: var(--chalk-dim); font-size: 17px; }
+  .day-line { font-size: 19px; padding: 4px 0; display: flex; justify-content: space-between; gap: 10px; }
+  .day-line .lbl { color: var(--chalk-dim); }
+  .day-line .val { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .not-logged { color: var(--chalk-dim); font-size: 18px; font-style: italic; }
+
+  .center-msg { text-align: center; color: var(--chalk-dim); font-size: 22px; margin-top: 60px; line-height: 1.5; }
+  .error-banner { background: var(--accent-dim); color: var(--chalk); padding: 14px 16px; border-radius: 10px; font-size: 18px; margin-bottom: 16px; }
+</style>
+</head>
+<body>
+<div id="root"><div class="center-msg">Loading…</div></div>
+
+<script>
+  // ======================= CONFIG =======================
+  const SUPABASE_URL = 'https://cdnjaoqkxztmdiaetwgh.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_6bfDWvU8DPWpzCS96XCQXg_jJc2AV5z';
+  // ========================================================
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const root = document.getElementById('root');
+
+  function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function epley(weight, reps) { return weight * (1 + reps / 30); }
+  function isoDate(d) { return d.toISOString().slice(0, 10); }
+  function fmtShort(dstr) {
+    const d = new Date(dstr + 'T12:00:00');
+    return `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${d.getMonth()+1}/${d.getDate()}`;
+  }
+  function fmtTime(sec) {
+    if (sec === null || sec === undefined) return null;
+    const m = Math.floor(sec / 60), s = sec % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  function wodScoreText(r) {
+    if (r.score_type === 'time') return fmtTime(r.time_seconds);
+    if (r.score_type === 'rounds_reps') return `${r.rounds_completed ?? 0} rds + ${r.extra_reps ?? 0}`;
+    if (r.score_type === 'reps') return `${r.total_reps ?? 0} reps`;
+    if (r.score_type === 'calories') return `${r.calories ?? 0} cal`;
+    return r.notes || 'Logged';
+  }
+  function getMonday(d) {
+    d = new Date(d);
+    const day = d.getDay();
+    const diff = d.getDate() - day + (day === 0 ? -6 : 1);
+    return new Date(d.setFullYear(d.getFullYear(), d.getMonth(), diff));
+  }
+
+  async function main() {
+    const { data: sessionData } = await sb.auth.getSession();
+    if (!sessionData.session) {
+      root.innerHTML = `<div class="center-msg">Not signed in.<br><br><a href="index.html" style="color:#F2EFE9;">Go to the main app to sign in</a>, then come back here.</div>`;
+      return;
+    }
+
+    const today = new Date();
+    const monday = getMonday(today);
+    const friday = new Date(monday); friday.setDate(monday.getDate() + 4);
+    const weekDates = Array.from({ length: 5 }, (_, i) => {
+      const d = new Date(monday); d.setDate(monday.getDate() + i);
+      return isoDate(d);
+    });
+    const todayStr = isoDate(today);
+
+    try {
+      // 1. Workouts this week
+      const { data: workouts, error: wErr } = await sb
+        .from('workouts').select('id, workout_date')
+        .gte('workout_date', weekDates[0]).lte('workout_date', weekDates[4]);
+      if (wErr) throw wErr;
+      const workoutByDate = {};
+      workouts.forEach(w => { workoutByDate[w.workout_date] = w; });
+      const workoutIds = workouts.map(w => w.id);
+
+      // 2. Segments (havoc-sourced) for those workouts
+      let segments = [];
+      if (workoutIds.length) {
+        const { data, error } = await sb
+          .from('segments').select('*').in('workout_id', workoutIds).eq('source', 'havoc')
+          .in('segment_type', ['strength', 'wod']);
+        if (error) throw error;
+        segments = data;
+      }
+      const segmentById = {};
+      segments.forEach(s => { segmentById[s.id] = s; });
+      const strengthSegIds = segments.filter(s => s.segment_type === 'strength').map(s => s.id);
+      const wodSegIds = segments.filter(s => s.segment_type === 'wod').map(s => s.id);
+
+      // 3. All movement names (small table, just fetch once)
+      const { data: movements } = await sb.from('movements').select('id, name');
+      const movementNameById = {};
+      (movements || []).forEach(m => { movementNameById[m.id] = m.name; });
+
+      // 4. This week's strength results
+      let weekStrength = [];
+      if (strengthSegIds.length) {
+        const { data, error } = await sb
+          .from('strength_results').select('*').in('segment_id', strengthSegIds).order('logged_at');
+        if (error) throw error;
+        weekStrength = data;
+      }
+
+      // 5. This week's WOD results
+      let weekWod = [];
+      if (wodSegIds.length) {
+        const { data, error } = await sb
+          .from('wod_results').select('*').in('segment_id', wodSegIds).order('logged_at');
+        if (error) throw error;
+        weekWod = data;
+      }
+
+      // 6. PR detection: for each movement touched this week, compare this week's best est.1RM
+      //    against all-time best BEFORE this week.
+      const movementIdsThisWeek = [...new Set(weekStrength.filter(r => r.weight_lbs && r.reps_completed).map(r => r.movement_id))];
+      const prList = [];
+      for (const movId of movementIdsThisWeek) {
+        const { data: allRows, error } = await sb
+          .from('strength_results').select('reps_completed, weight_lbs, logged_at')
+          .eq('movement_id', movId).not('weight_lbs', 'is', null).not('reps_completed', 'is', null);
+        if (error) continue;
+        let priorBest = null, thisWeekBest = null, thisWeekBestRow = null;
+        for (const row of allRows) {
+          const est = epley(row.weight_lbs, row.reps_completed);
+          const rowDate = row.logged_at.slice(0, 10);
+          if (rowDate >= weekDates[0] && rowDate <= weekDates[4]) {
+            if (thisWeekBest === null || est > thisWeekBest) { thisWeekBest = est; thisWeekBestRow = row; }
+          } else if (rowDate < weekDates[0]) {
+            if (priorBest === null || est > priorBest) priorBest = est;
+          }
+        }
+        if (thisWeekBest !== null && (priorBest === null || thisWeekBest > priorBest)) {
+          prList.push({ name: movementNameById[movId] || 'Movement', row: thisWeekBestRow, est: thisWeekBest });
+        }
+      }
+
+      // ---- Render ----
+      const daysLoggedCount = weekDates.filter(d =>
+        weekStrength.some(r => segmentById[r.segment_id]?.workout_id === workoutByDate[d]?.id) ||
+        weekWod.some(r => segmentById[r.segment_id]?.workout_id === workoutByDate[d]?.id)
+      ).length;
+      const expectedSoFar = weekDates.filter(d => d <= todayStr).length;
+      const totalSets = weekStrength.length;
+      const totalVolume = weekStrength.reduce((sum, r) => sum + ((r.weight_lbs || 0) * (r.reps_completed || 0)), 0);
+
+      let html = `
+        <div class="header-row"><a class="back-link" href="index.html">← Today</a></div>
+        <div class="page-title">This Week</div>
+        <div class="date-range">${fmtShort(weekDates[0])} – ${fmtShort(weekDates[4])}</div>
+
+        <div class="stat-row">
+          <div class="stat-card"><div class="stat-num">${daysLoggedCount}/${expectedSoFar}</div><div class="stat-label">days logged</div></div>
+          <div class="stat-card"><div class="stat-num">${totalSets}</div><div class="stat-label">sets logged</div></div>
+          <div class="stat-card"><div class="stat-num">${totalVolume.toLocaleString()}</div><div class="stat-label">lb volume</div></div>
+        </div>
+      `;
+
+      if (prList.length) {
+        html += `<div class="pr-section">`;
+        prList.forEach(pr => {
+          html += `<div class="pr-card">🏆 ${esc(pr.name)} PR
+            <span class="sub">${pr.row.reps_completed} reps @ ${pr.row.weight_lbs} lb · est. 1RM ${Math.round(pr.est)} lb</span></div>`;
+        });
+        html += `</div>`;
+      }
+
+      weekDates.forEach(dateStr => {
+        const workout = workoutByDate[dateStr];
+        const dayName = new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'long' });
+        const isFuture = dateStr > todayStr;
+
+        const strengthForDay = workout
+          ? weekStrength.filter(r => segmentById[r.segment_id]?.workout_id === workout.id) : [];
+        const wodForDay = workout
+          ? weekWod.filter(r => segmentById[r.segment_id]?.workout_id === workout.id) : [];
+
+        const hasData = strengthForDay.length > 0 || wodForDay.length > 0;
+
+        let bodyHtml;
+        if (isFuture) {
+          bodyHtml = `<div class="not-logged">Not yet</div>`;
+        } else if (!workout) {
+          bodyHtml = `<div class="not-logged">No class posted</div>`;
+        } else if (!hasData) {
+          bodyHtml = `<div class="not-logged">Not logged</div>`;
+        } else {
+          const byMovement = {};
+          strengthForDay.forEach(r => {
+            const name = movementNameById[r.movement_id] || 'Movement';
+            if (!byMovement[name]) byMovement[name] = [];
+            byMovement[name].push(r);
+          });
+          let lines = '';
+          Object.entries(byMovement).forEach(([name, rows]) => {
+            const best = rows.reduce((a, b) => (b.weight_lbs || 0) > (a.weight_lbs || 0) ? b : a);
+            lines += `<div class="day-line"><span class="lbl">${esc(name)}</span><span class="val">${best.reps_completed ?? '?'} @ ${best.weight_lbs ?? '?'} lb</span></div>`;
+          });
+          wodForDay.forEach(r => {
+            lines += `<div class="day-line"><span class="lbl">WOD${r.rx_or_scaled ? ' (' + r.rx_or_scaled + ')' : ''}</span><span class="val">${esc(wodScoreText(r))}</span></div>`;
+          });
+          bodyHtml = lines;
+        }
+
+        html += `
+          <div class="day-card ${hasData ? '' : 'empty'}">
+            <div class="day-head"><span class="day-name">${dayName}</span><span class="day-date">${fmtShort(dateStr)}</span></div>
+            ${bodyHtml}
+          </div>`;
+      });
+
+      root.innerHTML = html;
+    } catch (e) {
+      root.innerHTML = `<div class="error-banner">${esc(e.message || String(e))}</div>`;
+    }
+  }
+
+  main();
+</script>
+</body>
+</html>
