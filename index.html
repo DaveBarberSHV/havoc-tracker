@@ -248,7 +248,7 @@
   async function sendMagicLink(email) {
     state.error = null;
     const { error } = await sb.auth.signInWithOtp({
-      email, options: { emailRedirectTo: window.location.href }
+      email, options: { emailRedirectTo: window.location.origin + window.location.pathname }
     });
     if (error) { state.error = error.message; render(); return; }
     state.error = null;
