@@ -184,7 +184,7 @@
         weekWod.some(r => segmentById[r.segment_id]?.workout_id === workoutByDate[d]?.id)
       ).length;
       const expectedSoFar = weekDates.filter(d => d <= todayStr).length;
-      const totalSets = weekStrength.length;
+      const totalReps = weekStrength.reduce((sum, r) => sum + (r.reps_completed || 0), 0);
       const totalVolume = weekStrength.reduce((sum, r) => sum + ((r.weight_lbs || 0) * (r.reps_completed || 0)), 0);
 
       let html = `
@@ -194,7 +194,7 @@
 
         <div class="stat-row">
           <div class="stat-card"><div class="stat-num">${daysLoggedCount}/${expectedSoFar}</div><div class="stat-label">days logged</div></div>
-          <div class="stat-card"><div class="stat-num">${totalSets}</div><div class="stat-label">sets logged</div></div>
+          <div class="stat-card"><div class="stat-num">${totalReps}</div><div class="stat-label">reps logged</div></div>
           <div class="stat-card"><div class="stat-num">${totalVolume.toLocaleString()}</div><div class="stat-label">lb volume</div></div>
         </div>
       `;
