@@ -181,6 +181,15 @@
   const SUPABASE_ANON_KEY = 'sb_publishable_6bfDWvU8DPWpzCS96XCQXg_jJc2AV5z';
   // ========================================================
 
+  // Some email providers (seen with Resend's link handling) double-encode the '#'
+  // in the magic-link redirect URL, turning '#access_token=...' into '#%23access_token=...'.
+  // Supabase can't recognize the session in that mangled form, so fix it here,
+  // before the Supabase client is created and starts scanning the URL.
+  if (window.location.hash.indexOf('#%23') === 0) {
+    const corrected = '#' + window.location.hash.slice(4);
+    history.replaceState(null, '', window.location.pathname + window.location.search + corrected);
+  }
+
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const root = document.getElementById('root');
 
