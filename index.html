@@ -238,6 +238,29 @@
   }
   function epley(weight, reps) { return weight * (1 + reps / 30); }
 
+  // Heuristic list of common bodyweight/no-load movements — no schema change
+  // needed, and works retroactively on every movement already in the database.
+  // Add more patterns here as new bodyweight movements show up in the programming.
+  const BODYWEIGHT_PATTERNS = [
+    /sit.?up/i, /push.?up/i, /pull.?up/i, /hspu|handstand.?push.?up/i,
+    /air.?squat/i, /pistol/i, /squat.?jump/i, /broad.?jump/i, /box.?jump/i,
+    /box.?step.?up/i, /step.?up/i, /lunge/i,
+    /burpee/i, /mountain.?climber/i, /bear.?crawl/i, /ring.?row/i,
+    /toes.?to.?bar|t2b/i, /knees.?to.?elbows?|k2e/i, /muscle.?up/i,
+    /ring.?dip/i, /\bdip\b/i, /jumping.?jack/i, /double.?under/i, /single.?under/i,
+    /rope.?climb/i, /ghd/i,
+  ];
+  // Some bodyweight-pattern names (lunges, step-ups) can also appear as a loaded
+  // variant (e.g. "Weighted Lunges", "Dumbbell Step Ups"). If the name explicitly
+  // mentions an implement, always treat it as loaded regardless of the match above.
+  const LOADED_OVERRIDE_PATTERNS = [
+    /weighted/i, /dumbbell/i, /\bdb\b/i, /barbell/i, /kettlebell/i, /\bkb\b/i, /goblet/i,
+  ];
+  function isBodyweightMovement(name) {
+    if (LOADED_OVERRIDE_PATTERNS.some((p) => p.test(name))) return false;
+    return BODYWEIGHT_PATTERNS.some((p) => p.test(name));
+  }
+
   // ======================= AUTH =======================
   async function init() {
     await recoverSessionFromUrl();
@@ -315,14 +338,17 @@
     const { data, error } = await sb
       .from('strength_results').select('reps_completed, weight_lbs, logged_at')
       .eq('movement_id', movementId).order('logged_at', { ascending: false }).limit(5);
-    if (error) { state.error = error.message; return { recent: [], best1RM: null, bestSource: null }; }
+    if (error) { state.error = error.message; return { recent: [], best1RM: null, bestSource: null, bestReps: null }; }
     const recent = data || [];
-    let best1RM = null, bestSource = null;
-    // Look across full history for the 1RM record, not just the last 5 shown
+    let best1RM = null, bestSource = null, bestReps = null;
+    // Look across full history for the 1RM/best-reps record, not just the last 5 shown
     const { data: allRows } = await sb
       .from('strength_results').select('reps_completed, weight_lbs')
-      .eq('movement_id', movementId).not('weight_lbs', 'is', null).not('reps_completed', 'is', null);
+      .eq('movement_id', movementId).not('reps_completed', 'is', null);
     for (const row of (allRows || [])) {
+      if (row.reps_completed && (bestReps === null || row.reps_completed > bestReps)) {
+        bestReps = row.reps_completed;
+      }
       if (!row.weight_lbs || !row.reps_completed) continue;
       const est = epley(row.weight_lbs, row.reps_completed);
       if (best1RM === null || est > best1RM) {
@@ -330,7 +356,7 @@
         bestSource = row.reps_completed === 1 ? 'actual' : 'calculated';
       }
     }
-    return { recent, best1RM, bestSource };
+    return { recent, best1RM, bestSource, bestReps };
   }
 
   // ======================= WRITES =======================
@@ -411,9 +437,13 @@
     root.innerHTML = `<div class="center-msg">Loading movement…</div>`;
     const prescribedSets = task.segMovement.prescribed_sets || 1;
     const prescribedReps = parseLeadingInt(task.segMovement.prescribed_reps) || null;
-    const { recent, best1RM, bestSource } = await loadMovementHistory(task.movement.id);
+    const isBodyweight = isBodyweightMovement(task.movement.name);
+    const STEP = isBodyweight ? 1 : 5;
+    const { recent, best1RM, bestSource, bestReps } = await loadMovementHistory(task.movement.id);
 
-    let weight = recent.length ? Math.round(recent[0].weight_lbs || 0) : 0;
+    let weight = recent.length
+      ? Math.round((isBodyweight ? recent[0].reps_completed : recent[0].weight_lbs) || 0)
+      : (isBodyweight ? (prescribedReps || 0) : 0);
 
     function draw() {
       const tabsHtml = Array.from({ length: prescribedSets }, (_, i) => {
@@ -422,19 +452,32 @@
         return `<div class="set-tab ${cls}">${n}</div>`;
       }).join('');
 
-      const lastLine = recent.length
-        ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps @ ${recent[0].weight_lbs ?? '?'} lb`
-        : `No sessions logged yet`;
-      const ormLine = best1RM
-        ? `1RM = ${Math.round(best1RM)} lb (${bestSource})`
-        : `1RM = Unknown`;
+      let lastLine, contextLine2, isPR, prBadgeText, priorRows, unitLabel;
 
-      const estToday = prescribedReps ? epley(weight, prescribedReps) : weight;
-      const isPR = best1RM !== null && estToday > best1RM;
-
-      const priorRows = recent.map(r =>
-        `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps @ ${r.weight_lbs ?? '?'} lb</span></div>`
-      ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
+      if (isBodyweight) {
+        unitLabel = 'reps &middot; tap number to type';
+        lastLine = recent.length
+          ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps`
+          : `No sessions logged yet`;
+        contextLine2 = bestReps !== null ? `Best ever = ${bestReps} reps` : `Best ever = Unknown`;
+        isPR = bestReps !== null && weight > bestReps;
+        prBadgeText = '🏆 New rep PR';
+        priorRows = recent.map(r =>
+          `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps</span></div>`
+        ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
+      } else {
+        unitLabel = 'lb &middot; tap number to type';
+        lastLine = recent.length
+          ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps @ ${recent[0].weight_lbs ?? '?'} lb`
+          : `No sessions logged yet`;
+        contextLine2 = best1RM ? `1RM = ${Math.round(best1RM)} lb (${bestSource})` : `1RM = Unknown`;
+        const estToday = prescribedReps ? epley(weight, prescribedReps) : weight;
+        isPR = best1RM !== null && estToday > best1RM;
+        prBadgeText = '🏆 New est. 1RM PR';
+        priorRows = recent.map(r =>
+          `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps @ ${r.weight_lbs ?? '?'} lb</span></div>`
+        ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
+      }
 
       root.innerHTML = `
         ${navBarHtml()}
@@ -451,12 +494,12 @@
             <button class="stepper" id="decBtn">−</button>
             <div>
               <div class="weight-display" id="weightVal">${weight}</div>
-              <div class="unit">lb &middot; tap number to type</div>
+              <div class="unit">${unitLabel}</div>
             </div>
             <button class="stepper" id="incBtn">+</button>
           </div>
-          <div class="context-line">${lastLine}<span class="line2">${ormLine}</span></div>
-          <div class="pr-badge" style="display:${isPR ? 'inline-flex' : 'none'}">🏆 New est. 1RM PR</div>
+          <div class="context-line">${lastLine}<span class="line2">${contextLine2}</span></div>
+          <div class="pr-badge" style="display:${isPR ? 'inline-flex' : 'none'}">${prBadgeText}</div>
         </div>
         ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
         <div class="notes-field">
@@ -471,7 +514,7 @@
       `;
       wireNavBar();
 
-      // Press-and-hold acceleration: a quick tap nudges by 5; holding down
+      // Press-and-hold acceleration: a quick tap nudges by STEP; holding down
       // repeats automatically, speeding up the longer it's held. This avoids
       // needing dozens of taps to move a heavy lift from e.g. 135 to 275.
       // Important: draw() fully replaces the DOM (including these buttons),
@@ -479,7 +522,6 @@
       // draw() only happens once, on release, to refresh the PR badge/context.
       function wireHoldStepper(btn, direction) {
         let holdTimer = null, repeatTimer = null;
-        const STEP = 5;
         const weightValEl = () => document.getElementById('weightVal');
         const doStep = () => {
           weight = Math.max(0, weight + direction * STEP);
@@ -535,8 +577,10 @@
       document.getElementById('logBtn').onclick = async () => {
         document.getElementById('logBtn').disabled = true;
         const noteVal = document.getElementById('notesInput').value.trim() || null;
+        const repsToLog = isBodyweight ? weight : prescribedReps;
+        const weightToLog = isBodyweight ? null : weight;
         try {
-          await logStrengthSet(task.segMovement.id, task.movement.id, state.setNumber, prescribedReps, weight, noteVal);
+          await logStrengthSet(task.segMovement.id, task.movement.id, state.setNumber, repsToLog, weightToLog, noteVal);
           state.error = null;
           if (state.setNumber < prescribedSets) {
             state.setNumber += 1;
