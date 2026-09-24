@@ -181,16 +181,30 @@
   const SUPABASE_ANON_KEY = 'sb_publishable_6bfDWvU8DPWpzCS96XCQXg_jJc2AV5z';
   // ========================================================
 
-  // Some email providers (seen with Resend's link handling) double-encode the '#'
-  // in the magic-link redirect URL, turning '#access_token=...' into '#%23access_token=...'.
-  // Supabase can't recognize the session in that mangled form, so fix it here,
-  // before the Supabase client is created and starts scanning the URL.
-  if (window.location.hash.indexOf('#%23') === 0) {
-    const corrected = '#' + window.location.hash.slice(4);
-    history.replaceState(null, '', window.location.pathname + window.location.search + corrected);
+  // Magic-link URLs sometimes arrive corrupted (extra encoding, or a stray
+  // error=access_denied&error_code=otp_expired block glued in front of a still-valid
+  // token) depending on the email client/provider. Rather than trust Supabase's
+  // built-in URL parser (which gives up the moment it sees a leading error= param),
+  // we take full manual control: search the raw URL for access_token/refresh_token
+  // wherever they appear, and establish the session ourselves if found.
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { detectSessionInUrl: false }
+  });
+
+  async function recoverSessionFromUrl() {
+    const href = window.location.href;
+    const accessMatch = href.match(/access_token=([^&]+)/);
+    const refreshMatch = href.match(/refresh_token=([^&]+)/);
+    if (!accessMatch || !refreshMatch) return false;
+    const { error } = await sb.auth.setSession({
+      access_token: accessMatch[1],
+      refresh_token: refreshMatch[1],
+    });
+    // Clean the messy hash out of the address bar either way
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    return !error;
   }
 
-  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
   const root = document.getElementById('root');
 
   let state = {
@@ -218,6 +232,7 @@
 
   // ======================= AUTH =======================
   async function init() {
+    await recoverSessionFromUrl();
     const { data } = await sb.auth.getSession();
     state.session = data.session;
     sb.auth.onAuthStateChange((_event, session) => {
