@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Havoc Tracker</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -80,12 +80,20 @@
   .stepper {
     width: 64px; height: 64px; border-radius: 50%; background: var(--panel-2); color: var(--chalk);
     font-size: 30px; font-weight: 700; border: none; display: flex; align-items: center;
-    justify-content: center; flex-shrink: 0; user-select: none;
+    justify-content: center; flex-shrink: 0; user-select: none; touch-action: manipulation;
   }
   .stepper:active { background: var(--accent-dim); }
   .weight-display {
     font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 76px; font-weight: 700;
     min-width: 170px; text-align: center; font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+    touch-action: manipulation; cursor: pointer; border-bottom: 2px dashed transparent;
+  }
+  .weight-display:active { border-bottom-color: var(--chalk-dim); }
+  .weight-input {
+    font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 76px; font-weight: 700;
+    min-width: 170px; max-width: 220px; text-align: center; font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em; background: var(--panel-2); color: var(--chalk); border: 2px solid var(--accent);
+    border-radius: 10px; padding: 0 4px;
   }
   .unit { color: var(--chalk-dim); font-size: 22px; margin-top: -4px; text-align: center; }
 
@@ -443,7 +451,7 @@
             <button class="stepper" id="decBtn">−</button>
             <div>
               <div class="weight-display" id="weightVal">${weight}</div>
-              <div class="unit">lb</div>
+              <div class="unit">lb &middot; tap number to type</div>
             </div>
             <button class="stepper" id="incBtn">+</button>
           </div>
@@ -462,8 +470,68 @@
         </div>
       `;
       wireNavBar();
-      document.getElementById('decBtn').onclick = () => { weight = Math.max(0, weight - 5); draw(); };
-      document.getElementById('incBtn').onclick = () => { weight = weight + 5; draw(); };
+
+      // Press-and-hold acceleration: a quick tap nudges by 5; holding down
+      // repeats automatically, speeding up the longer it's held. This avoids
+      // needing dozens of taps to move a heavy lift from e.g. 135 to 275.
+      // Important: draw() fully replaces the DOM (including these buttons),
+      // so mid-hold we only update the displayed number directly — a full
+      // draw() only happens once, on release, to refresh the PR badge/context.
+      function wireHoldStepper(btn, direction) {
+        let holdTimer = null, repeatTimer = null;
+        const STEP = 5;
+        const weightValEl = () => document.getElementById('weightVal');
+        const doStep = () => {
+          weight = Math.max(0, weight + direction * STEP);
+          const el = weightValEl();
+          if (el) el.textContent = weight;
+        };
+        const startHolding = (e) => {
+          e.preventDefault();
+          doStep(); // immediate single-tap response
+          holdTimer = setTimeout(() => {
+            let interval = 260;
+            const tick = () => {
+              doStep();
+              interval = Math.max(60, interval - 25); // accelerate
+              repeatTimer = setTimeout(tick, interval);
+            };
+            tick();
+          }, 350);
+        };
+        const stopHolding = () => {
+          clearTimeout(holdTimer);
+          clearTimeout(repeatTimer);
+          draw(); // one full re-render now that the value has settled
+        };
+        btn.addEventListener('pointerdown', startHolding);
+        btn.addEventListener('pointerup', stopHolding);
+        btn.addEventListener('pointerleave', stopHolding);
+        btn.addEventListener('pointercancel', stopHolding);
+      }
+      wireHoldStepper(document.getElementById('decBtn'), -1);
+      wireHoldStepper(document.getElementById('incBtn'), 1);
+
+      // Tap the number itself to type an exact value directly, using the
+      // phone's native numeric keypad — fastest path for a big jump.
+      document.getElementById('weightVal').onclick = () => {
+        const displayEl = document.getElementById('weightVal');
+        const input = document.createElement('input');
+        input.type = 'number';
+        input.inputMode = 'numeric';
+        input.className = 'weight-input';
+        input.value = weight;
+        displayEl.replaceWith(input);
+        input.focus();
+        input.select();
+        const commit = () => {
+          const parsed = parseInt(input.value, 10);
+          weight = isNaN(parsed) ? weight : Math.max(0, parsed);
+          draw();
+        };
+        input.addEventListener('blur', commit);
+        input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); } });
+      };
       document.getElementById('logBtn').onclick = async () => {
         document.getElementById('logBtn').disabled = true;
         const noteVal = document.getElementById('notesInput').value.trim() || null;
