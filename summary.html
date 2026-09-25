@@ -189,7 +189,7 @@
       const totalVolume = weekStrength.reduce((sum, r) => sum + ((r.weight_lbs || 0) * (r.reps_completed || 0)), 0);
 
       let html = `
-        <div class="header-row"><a class="back-link" href="index.html">← Today</a></div>
+        <div class="header-row"><a class="back-link" href="index.html">← Today</a><a class="back-link" href="history.html">History</a></div>
         <div class="page-title">This Week</div>
         <div class="date-range">${fmtShort(weekDates[0])} – ${fmtShort(weekDates[4])}</div>
 

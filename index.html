@@ -141,8 +141,9 @@
 
   /* ---------- Auth screen ---------- */
   .auth-wrap { display: flex; flex-direction: column; justify-content: center; flex: 1; gap: 18px; }
-  .auth-title { font-size: 44px; font-weight: 700; text-align: center; margin-bottom: 8px; }
-  .auth-sub { color: var(--chalk-dim); font-size: 20px; text-align: center; margin-bottom: 20px; }
+  .auth-title { font-size: 40px; font-weight: 700; text-align: center; margin: 0 0 4px; }
+  .auth-sub { color: var(--chalk-dim); font-size: 19px; text-align: center; margin-bottom: 16px; }
+  .havoc-logo { display: block; margin: 0 auto; max-height: 90px; width: auto; max-width: 70%; border-radius: 8px; }
   input[type="email"], input[type="number"], input[type="text"] {
     width: 100%; padding: 16px; border-radius: 10px; border: 2px solid var(--panel-2);
     background: var(--panel); color: var(--chalk); font-size: 22px; font-family: 'JetBrains Mono', monospace;
@@ -448,7 +449,7 @@
   }
 
   function navBarHtml() {
-    return `<div class="header-nav"><button class="nav-link-btn" id="changeDayBtn" type="button">Change day</button><button class="nav-link-btn" id="customBtn" type="button">Log custom</button><a href="summary.html">This Week →</a></div>`;
+    return `<div class="header-nav"><button class="nav-link-btn" id="changeDayBtn" type="button">Change day</button><button class="nav-link-btn" id="customBtn" type="button">Log custom</button><a href="history.html">History</a><a href="summary.html">This Week →</a></div>`;
   }
   function wireNavBar() {
     const dayBtn = document.getElementById('changeDayBtn');
@@ -582,7 +583,8 @@
   function renderAuth() {
     root.innerHTML = `
       <div class="auth-wrap">
-        <div class="auth-title">Havoc Tracker</div>
+        <img src="https://crossfithavoc.com/wp-content/uploads/2022/05/cropped-crossfit-havoc-vctr-page-001.jpg" alt="CrossFit Havoc" class="havoc-logo">
+        <div class="auth-title">Tracker</div>
         <div class="auth-sub">Sign in with your email — we'll send a magic link, no password needed.</div>
         ${state.error ? `<div class="error-banner">${esc(state.error)}</div>` : ''}
         <input type="email" id="emailInput" placeholder="you@example.com" autocomplete="email">
