@@ -226,8 +226,6 @@
     taskIndex: 0,
     setNumber: 1,     // for strength tasks
     error: null,
-    alreadyLoggedToday: false,
-    confirmedRedo: false,
   };
 
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -319,23 +317,44 @@
       }
     }
     state.tasks = tasks;
-    state.taskIndex = 0;
-    state.setNumber = 1;
 
-    // Check whether today's workout already has any logged results for this user
-    // (RLS already scopes these queries to the signed-in user).
+    // Figure out exactly where to resume: skip past any strength movement whose
+    // sets are all already logged, or any WOD already scored, and land on the
+    // first genuinely incomplete task — so closing the app mid-workout and
+    // reopening it later picks up right where you left off, not from scratch.
     const wodSegIds = tasks.filter(t => t.type === 'wod').map(t => t.segment.id);
     const strengthSegIds = tasks.filter(t => t.type === 'strength').map(t => t.segment.id);
-    let alreadyLogged = false;
+
+    const loggedWodSegIds = new Set();
     if (wodSegIds.length) {
-      const { data } = await sb.from('wod_results').select('id').in('segment_id', wodSegIds).limit(1);
-      if (data && data.length) alreadyLogged = true;
+      const { data } = await sb.from('wod_results').select('segment_id').in('segment_id', wodSegIds);
+      (data || []).forEach(r => loggedWodSegIds.add(r.segment_id));
     }
-    if (!alreadyLogged && strengthSegIds.length) {
-      const { data } = await sb.from('strength_results').select('id').in('segment_id', strengthSegIds).limit(1);
-      if (data && data.length) alreadyLogged = true;
+
+    const strengthMaxSet = {}; // key: `${segment_id}_${movement_id}` -> highest set_number logged so far
+    if (strengthSegIds.length) {
+      const { data } = await sb.from('strength_results').select('segment_id, movement_id, set_number').in('segment_id', strengthSegIds);
+      (data || []).forEach(r => {
+        const key = `${r.segment_id}_${r.movement_id}`;
+        strengthMaxSet[key] = Math.max(strengthMaxSet[key] || 0, r.set_number || 0);
+      });
     }
-    state.alreadyLoggedToday = alreadyLogged;
+
+    let resumeIndex = tasks.length; // default: everything already done
+    let resumeSetNumber = 1;
+    for (let i = 0; i < tasks.length; i++) {
+      const t = tasks[i];
+      if (t.type === 'wod') {
+        if (!loggedWodSegIds.has(t.segment.id)) { resumeIndex = i; resumeSetNumber = 1; break; }
+      } else {
+        const key = `${t.segment.id}_${t.movement.id}`;
+        const loggedCount = strengthMaxSet[key] || 0;
+        const prescribedSets = t.segMovement.prescribed_sets || 1;
+        if (loggedCount < prescribedSets) { resumeIndex = i; resumeSetNumber = loggedCount + 1; break; }
+      }
+    }
+    state.taskIndex = resumeIndex;
+    state.setNumber = resumeSetNumber;
   }
 
   async function loadMovementHistory(movementId) {
@@ -553,7 +572,6 @@
       btn.onclick = async () => {
         root.innerHTML = `<div class="center-msg">Loading…</div>`;
         await loadWorkoutForDate(btn.dataset.date);
-        state.confirmedRedo = false;
         render();
       };
     });
@@ -837,25 +855,6 @@
     };
   }
 
-  // ======================= RENDER: ALREADY LOGGED GATE =======================
-  function renderAlreadyLogged() {
-    root.innerHTML = `
-      ${navBarHtml()}
-      <div class="center-msg">
-        You've already logged results for ${esc(state.workout.workout_date)}.
-      </div>
-      <button class="log-btn" id="redoBtn" style="margin-top:30px;">Redo entry anyway</button>
-      <a href="summary.html" style="text-decoration:none;">
-        <button class="secondary-btn" style="width:100%;">View This Week</button>
-      </a>
-    `;
-    wireNavBar();
-    document.getElementById('redoBtn').onclick = () => {
-      state.confirmedRedo = true;
-      render();
-    };
-  }
-
   // ======================= RENDER: DONE =======================
   function renderDone() {
     root.innerHTML = `
@@ -865,9 +864,15 @@
         Workout logged for ${esc(state.workout.workout_date)}.<br><br>
         Nice work.
       </div>
-      <button class="secondary-btn" id="signOutBtn" style="margin-top:40px;">Sign out</button>
+      <button class="secondary-btn" id="redoBtn" style="margin-top:30px;">Need to fix something? Redo from the start</button>
+      <button class="secondary-btn" id="signOutBtn">Sign out</button>
     `;
     wireNavBar();
+    document.getElementById('redoBtn').onclick = () => {
+      state.taskIndex = 0;
+      state.setNumber = 1;
+      render();
+    };
     document.getElementById('signOutBtn').onclick = async () => { await sb.auth.signOut(); state.session = null; render(); };
   }
 
@@ -879,7 +884,6 @@
       wireNavBar();
       return;
     }
-    if (state.alreadyLoggedToday && !state.confirmedRedo) { renderAlreadyLogged(); return; }
     if (state.taskIndex >= state.tasks.length) { renderDone(); return; }
     const task = state.tasks[state.taskIndex];
     if (task.type === 'strength') renderStrength(task);
