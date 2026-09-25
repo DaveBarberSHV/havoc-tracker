@@ -40,14 +40,23 @@ from nightly_ingest import parse_with_claude, load_into_supabase  # reuse the sa
 WOD_URL = "https://crossfithavoc.com/wod/"
 
 
-def fetch(url: str) -> str:
-    resp = requests.get(url, timeout=20, headers={"User-Agent": "havoc-tracker/1.0"})
+def fetch(url: str, no_cache: bool = False) -> str:
+    headers = {"User-Agent": "havoc-tracker/1.0"}
+    if no_cache:
+        headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        headers["Pragma"] = "no-cache"
+        url = f"{url}{'&' if '?' in url else '?'}_cb={int(time.time())}"
+    resp = requests.get(url, timeout=20, headers=headers)
     resp.raise_for_status()
     return resp.text
 
 
 def find_latest_post_url() -> str:
-    page_html = fetch(WOD_URL)
+    # no_cache=True here specifically: this is the one request where staleness
+    # actually matters (finding the *newest* post to start crawling backward
+    # from) — a caching layer was observed serving stale content to non-browser
+    # requests here, even though a fresh browser load showed the current post.
+    page_html = fetch(WOD_URL, no_cache=True)
     match = re.search(
         r'<h2[^>]*>\s*<a[^>]+href="(https://crossfithavoc\.com/\d{4}/\d{2}/\d{2}/[^"]+)"',
         page_html,

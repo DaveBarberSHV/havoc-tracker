@@ -18,6 +18,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from dateutil import parser as dateparser
 
@@ -77,7 +78,20 @@ Here is the workout text to parse:
 
 
 def fetch_wod_page() -> str:
-    resp = requests.get(WOD_URL, timeout=20, headers={"User-Agent": "havoc-tracker/1.0"})
+    # A cache-busting query param + no-cache headers, in case a CDN or caching
+    # layer in front of the site serves stale content to non-browser requests
+    # (observed: a fresh private-browser load shows the newest post correctly,
+    # but a plain requests.get() without these was returning a stale version).
+    cache_buster = str(int(time.time()))
+    url = f"{WOD_URL}?_cb={cache_buster}"
+    resp = requests.get(
+        url, timeout=20,
+        headers={
+            "User-Agent": "havoc-tracker/1.0",
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+        },
+    )
     resp.raise_for_status()
     return resp.text
 
