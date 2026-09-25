@@ -499,10 +499,10 @@
       <div class="menu-overlay" id="menuOverlay"></div>
       <div class="menu-panel" id="menuPanel">
         <button class="menu-item" id="menuToday" type="button">Today</button>
-        <button class="menu-item" id="menuChangeDay" type="button">Change Day</button>
-        <button class="menu-item" id="menuLogCustom" type="button">Log Custom</button>
-        <a class="menu-item" href="history.html">Movement History</a>
         <a class="menu-item" href="summary.html">This Week</a>
+        <a class="menu-item" href="history.html">Movement History</a>
+        <button class="menu-item" id="menuChangeDay" type="button">Pick a Day</button>
+        <button class="menu-item" id="menuLogCustom" type="button">Log Custom Workout</button>
         <button class="menu-item" id="menuSignOut" type="button">Sign Out</button>
         <button class="menu-close-btn" id="menuCloseBtn" type="button">Close</button>
       </div>`;
@@ -1259,7 +1259,7 @@
         Workout logged for ${esc(state.workout.workout_date)}.<br><br>
         Nice work.
       </div>
-      <button class="secondary-btn" id="redoBtn" style="margin-top:30px;">Need to fix something? Redo from the start</button>
+      <button class="secondary-btn" id="redoBtn" style="margin-top:30px;">Re-Enter Results</button>
     `;
     wireTopBar();
     document.getElementById('redoBtn').onclick = () => {
