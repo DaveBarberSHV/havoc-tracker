@@ -237,8 +237,14 @@
           });
           let lines = '';
           Object.entries(byMovement).forEach(([name, rows]) => {
-            const best = rows.reduce((a, b) => (b.weight_lbs || 0) > (a.weight_lbs || 0) ? b : a);
-            lines += `<div class="day-line"><span class="lbl">${esc(name)}</span><span class="val">${best.reps_completed ?? '?'} @ ${best.weight_lbs ?? '?'} lb</span></div>`;
+            const anyWeighted = rows.some(r => r.weight_lbs);
+            const best = anyWeighted
+              ? rows.reduce((a, b) => (b.weight_lbs || 0) > (a.weight_lbs || 0) ? b : a)
+              : rows.reduce((a, b) => (b.reps_completed || 0) > (a.reps_completed || 0) ? b : a);
+            const valText = best.weight_lbs
+              ? `${best.reps_completed ?? '?'} @ ${best.weight_lbs} lb`
+              : `${best.reps_completed ?? '?'} reps`;
+            lines += `<div class="day-line"><span class="lbl">${esc(name)}</span><span class="val">${valText}</span></div>`;
           });
           wodForDay.forEach(r => {
             const seg = segmentById[r.segment_id];

@@ -246,7 +246,7 @@
   const BODYWEIGHT_PATTERNS = [
     /sit.?up/i, /push.?up/i, /pull.?up/i, /hspu|handstand.?push.?up/i,
     /air.?squat/i, /pistol/i, /squat.?jump/i, /broad.?jump/i, /box.?jump/i,
-    /box.?step.?up/i, /step.?up/i, /lunge/i,
+    /box.?step.?up/i, /step.?up/i, /lunge/i, /ab.?wheel/i,
     /burpee/i, /mountain.?climber/i, /bear.?crawl/i, /ring.?row/i,
     /toes.?to.?bar|t2b/i, /knees.?to.?elbows?|k2e/i, /muscle.?up/i,
     /ring.?dip/i, /\bdip\b/i, /jumping.?jack/i, /double.?under/i, /single.?under/i,
@@ -606,6 +606,8 @@
     let weight = recent.length
       ? Math.round((isBodyweight ? recent[0].reps_completed : recent[0].weight_lbs) || 0)
       : (isBodyweight ? (prescribedReps || 0) : 0);
+    let extraWeight = recent.length && recent[0].weight_lbs ? Math.round(recent[0].weight_lbs) : 0;
+    let showExtraWeight = extraWeight > 0;
 
     function draw() {
       const tabsHtml = Array.from({ length: prescribedSets }, (_, i) => {
@@ -619,13 +621,13 @@
       if (isBodyweight) {
         unitLabel = 'reps &middot; tap number to type';
         lastLine = recent.length
-          ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps`
+          ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps${recent[0].weight_lbs ? ` @ ${recent[0].weight_lbs} lb` : ''}`
           : `No sessions logged yet`;
         contextLine2 = bestReps !== null ? `Best ever = ${bestReps} reps` : `Best ever = Unknown`;
         isPR = bestReps !== null && weight > bestReps;
         prBadgeText = '🏆 New rep PR';
         priorRows = recent.map(r =>
-          `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps</span></div>`
+          `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps${r.weight_lbs ? ` @ ${r.weight_lbs} lb` : ''}</span></div>`
         ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
       } else {
         unitLabel = 'lb &middot; tap number to type';
@@ -662,6 +664,16 @@
           </div>
           <div class="context-line">${lastLine}<span class="line2">${contextLine2}</span></div>
           <div class="pr-badge" style="display:${isPR ? 'inline-flex' : 'none'}">${prBadgeText}</div>
+          ${isBodyweight ? `
+            <button class="nav-link-btn" id="toggleExtraWeightBtn" type="button" style="margin-top:14px;">
+              ${showExtraWeight ? '− Remove added weight' : '+ Add weight (e.g. a ball or vest)'}
+            </button>
+            ${showExtraWeight ? `
+              <div class="score-row" style="margin-top:8px;">
+                <div class="score-field"><label>Added weight (lb)</label><input type="number" id="extraWeightInput" value="${extraWeight}" min="0"></div>
+              </div>
+            ` : ''}
+          ` : ''}
         </div>
         ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
         <div class="notes-field">
@@ -736,11 +748,32 @@
         input.addEventListener('blur', commit);
         input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { input.blur(); } });
       };
+
+      if (isBodyweight) {
+        const toggleBtn = document.getElementById('toggleExtraWeightBtn');
+        if (toggleBtn) {
+          toggleBtn.onclick = () => {
+            const existingInput = document.getElementById('extraWeightInput');
+            if (existingInput) {
+              const parsed = parseInt(existingInput.value, 10);
+              extraWeight = isNaN(parsed) ? extraWeight : Math.max(0, parsed);
+            }
+            showExtraWeight = !showExtraWeight;
+            draw();
+          };
+        }
+      }
+
       document.getElementById('logBtn').onclick = async () => {
         document.getElementById('logBtn').disabled = true;
         const noteVal = document.getElementById('notesInput').value.trim() || null;
         const repsToLog = isBodyweight ? weight : prescribedReps;
-        const weightToLog = isBodyweight ? null : weight;
+        let weightToLog = isBodyweight ? null : weight;
+        if (isBodyweight && showExtraWeight) {
+          const extraInput = document.getElementById('extraWeightInput');
+          const parsed = extraInput ? parseInt(extraInput.value, 10) : NaN;
+          if (!isNaN(parsed) && parsed > 0) weightToLog = parsed;
+        }
         try {
           await logStrengthSet(task.segMovement.id, task.movement.id, state.setNumber, repsToLog, weightToLog, noteVal);
           state.error = null;
