@@ -20,9 +20,37 @@
     padding: calc(20px + env(safe-area-inset-top, 0px)) 20px calc(32px + env(safe-area-inset-bottom, 0px)); }
   h1, h2, h3, p { margin: 0; }
 
-  .header-nav { display: flex; justify-content: space-between; align-items: baseline; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 10px; }
-  .header-nav a, .header-nav button { color: var(--chalk-dim); font-size: 17px; text-decoration: none;
-    background: none; border: none; font-family: 'Barlow Condensed', sans-serif; padding: 0; }
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; min-height: 40px; }
+  .hamburger-btn {
+    background: none; border: none; color: var(--chalk); font-size: 28px; padding: 4px 10px 4px 0;
+    line-height: 1; touch-action: manipulation;
+  }
+  .back-btn {
+    background: none; border: none; color: var(--chalk); font-size: 20px; padding: 6px 4px;
+    font-family: 'Barlow Condensed', sans-serif; touch-action: manipulation;
+  }
+  .menu-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 100;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+  }
+  .menu-overlay.open { opacity: 1; pointer-events: auto; }
+  .menu-panel {
+    position: fixed; top: 0; left: 0; right: 0; background: var(--panel); z-index: 101;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 24px; border-radius: 0 0 18px 18px;
+    transform: translateY(-105%); transition: transform 0.25s ease; max-width: 480px; margin: 0 auto;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  }
+  .menu-panel.open { transform: translateY(0); }
+  .menu-item {
+    display: block; width: 100%; text-align: left; background: var(--panel-2); color: var(--chalk);
+    border: none; border-radius: 10px; padding: 18px 18px; font-size: 24px; font-weight: 600;
+    font-family: 'Barlow Condensed', sans-serif; margin-bottom: 10px; text-decoration: none; touch-action: manipulation;
+  }
+  .menu-item:active { background: var(--accent-dim); }
+  .menu-close-btn {
+    display: block; width: 100%; text-align: center; background: none; border: none;
+    color: var(--chalk-dim); font-size: 19px; padding: 10px; margin-top: 4px; font-family: 'Barlow Condensed', sans-serif;
+  }
   .page-title { font-size: 38px; font-weight: 700; margin: 6px 0 2px; }
   .sub { color: var(--chalk-dim); font-size: 19px; margin-bottom: 18px; }
 
@@ -104,8 +132,36 @@
     return BODYWEIGHT_PATTERNS.some((p) => p.test(name));
   }
 
-  function navBarHtml() {
-    return `<div class="header-nav"><a href="index.html">← Today</a><a href="summary.html">This Week</a></div>`;
+  function topBarHtml(showBack) {
+    return `
+      <div class="top-bar">
+        <button class="hamburger-btn" id="menuBtn" type="button" aria-label="Menu">☰</button>
+        ${showBack ? `<button class="back-btn" id="topBackBtn" type="button">← Back</button>` : ''}
+      </div>
+      <div class="menu-overlay" id="menuOverlay"></div>
+      <div class="menu-panel" id="menuPanel">
+        <a class="menu-item" href="index.html">Today</a>
+        <a class="menu-item" href="summary.html">This Week</a>
+        <button class="menu-item" id="menuSignOut" type="button">Sign Out</button>
+        <button class="menu-close-btn" id="menuCloseBtn" type="button">Close</button>
+      </div>`;
+  }
+
+  function wireTopBar(onBack) {
+    const menuBtn = document.getElementById('menuBtn');
+    const overlay = document.getElementById('menuOverlay');
+    const panel = document.getElementById('menuPanel');
+    const closeBtn = document.getElementById('menuCloseBtn');
+    const openMenu = () => { overlay.classList.add('open'); panel.classList.add('open'); };
+    const closeMenu = () => { overlay.classList.remove('open'); panel.classList.remove('open'); };
+    menuBtn.onclick = openMenu;
+    overlay.onclick = closeMenu;
+    closeBtn.onclick = closeMenu;
+    document.getElementById('menuSignOut').onclick = async () => {
+      closeMenu(); await sb.auth.signOut(); window.location.href = 'index.html';
+    };
+    const backBtn = document.getElementById('topBackBtn');
+    if (backBtn && onBack) backBtn.onclick = onBack;
   }
 
   // ======================= SVG LINE CHART =======================
@@ -143,12 +199,14 @@
 
   // ======================= MOVEMENT PICKER =======================
   async function renderMovementPicker() {
-    root.innerHTML = `${navBarHtml()}<div class="page-title">Movement History</div><div class="center-msg" style="margin-top:20px;">Loading movements…</div>`;
+    root.innerHTML = `${topBarHtml(false)}<div class="page-title">Movement History</div><div class="center-msg" style="margin-top:20px;">Loading movements…</div>`;
+    wireTopBar();
 
     const { data, error } = await sb
       .from('strength_results').select('movement_id, movements(id, name)');
     if (error) {
-      root.innerHTML = `${navBarHtml()}<div class="error-banner">${esc(error.message)}</div>`;
+      root.innerHTML = `${topBarHtml(false)}<div class="error-banner">${esc(error.message)}</div>`;
+      wireTopBar();
       return;
     }
 
@@ -177,12 +235,13 @@
       ).join('') || `<div class="center-msg" style="margin-top:20px;font-size:19px;">No movements logged yet.</div>`;
 
       root.innerHTML = `
-        ${navBarHtml()}
+        ${topBarHtml(false)}
         <div class="page-title">Movement History</div>
         <div class="sub">Pick a lift to see every session over time</div>
         <input type="text" class="search-input" id="searchInput" placeholder="Search movements…" value="${esc(filterText || '')}">
         <div id="movementRows">${rowsHtml}</div>
       `;
+      wireTopBar();
       const searchEl = document.getElementById('searchInput');
       searchEl.oninput = () => draw(searchEl.value);
       if (filterText !== undefined) {
@@ -198,21 +257,22 @@
 
   // ======================= MOVEMENT DETAIL =======================
   async function renderMovementDetail(movementId, movementName) {
-    root.innerHTML = `${navBarHtml()}<div class="center-msg">Loading history…</div>`;
+    root.innerHTML = `${topBarHtml(true)}<div class="center-msg">Loading history…</div>`;
+    wireTopBar(() => renderMovementPicker());
 
     const { data, error } = await sb
       .from('strength_results').select('*')
       .eq('movement_id', movementId).order('logged_at', { ascending: true });
     if (error) {
-      root.innerHTML = `${navBarHtml()}<div class="error-banner">${esc(error.message)}</div>`;
+      root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(error.message)}</div>`;
+      wireTopBar(() => renderMovementPicker());
       return;
     }
     const sessions = data || [];
     const isBodyweight = isBodyweightMovement(movementName);
 
     let html = `
-      ${navBarHtml()}
-      <div class="header-nav" style="margin-bottom:-2px;"><button id="backToListBtn">← All movements</button></div>
+      ${topBarHtml(true)}
       <div class="page-title">${esc(movementName)}</div>
       <div class="sub">${sessions.length} session${sessions.length === 1 ? '' : 's'} logged</div>
     `;
@@ -220,7 +280,7 @@
     if (!sessions.length) {
       html += `<div class="center-msg" style="margin-top:20px;">No sessions yet for this movement.</div>`;
       root.innerHTML = html;
-      wireBack();
+      wireTopBar(() => renderMovementPicker());
       return;
     }
 
@@ -269,12 +329,7 @@
     }
 
     root.innerHTML = html;
-    wireBack();
-
-    function wireBack() {
-      const btn = document.getElementById('backToListBtn');
-      if (btn) btn.onclick = () => renderMovementPicker();
-    }
+    wireTopBar(() => renderMovementPicker());
   }
 
   function sessionListHtml(sessions, describe) {
