@@ -117,11 +117,12 @@
       workouts.forEach(w => { workoutByDate[w.workout_date] = w; });
       const workoutIds = workouts.map(w => w.id);
 
-      // 2. Segments (havoc-sourced) for those workouts
+      // 2. Segments — both Havoc-sourced AND your own custom entries (e.g. Saturday Hyrox,
+      //    extra Zone 2 sessions) for those workouts
       let segments = [];
       if (workoutIds.length) {
         const { data, error } = await sb
-          .from('segments').select('*').in('workout_id', workoutIds).eq('source', 'havoc')
+          .from('segments').select('*').in('workout_id', workoutIds)
           .in('segment_type', ['strength', 'wod']);
         if (error) throw error;
         segments = data;
@@ -240,7 +241,11 @@
             lines += `<div class="day-line"><span class="lbl">${esc(name)}</span><span class="val">${best.reps_completed ?? '?'} @ ${best.weight_lbs ?? '?'} lb</span></div>`;
           });
           wodForDay.forEach(r => {
-            lines += `<div class="day-line"><span class="lbl">WOD${r.rx_or_scaled ? ' (' + r.rx_or_scaled + ')' : ''}</span><span class="val">${esc(wodScoreText(r))}</span></div>`;
+            const seg = segmentById[r.segment_id];
+            const label = seg && seg.source === 'custom'
+              ? (seg.title || 'Custom')
+              : 'WOD';
+            lines += `<div class="day-line"><span class="lbl">${esc(label)}${r.rx_or_scaled ? ' (' + r.rx_or_scaled + ')' : ''}</span><span class="val">${esc(wodScoreText(r))}</span></div>`;
           });
           bodyHtml = lines;
         }

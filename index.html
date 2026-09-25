@@ -154,12 +154,16 @@
   .score-field { flex: 1; text-align: center; }
   .score-field label { display: block; color: var(--chalk-dim); font-size: 18px; margin-bottom: 6px; }
   .score-field input { text-align: center; font-size: 32px; padding: 14px; }
-  .toggle-row { display: flex; gap: 8px; margin-top: 18px; width: 100%; }
+  .toggle-row { display: flex; gap: 8px; margin-top: 18px; width: 100%; flex-wrap: wrap; }
   .toggle-btn {
-    flex: 1; padding: 12px 0; border-radius: 10px; background: var(--panel-2); color: var(--chalk-dim);
+    flex: 1; min-width: 90px; padding: 12px 0; border-radius: 10px; background: var(--panel-2); color: var(--chalk-dim);
     border: 2px solid transparent; font-family: 'Barlow Condensed', sans-serif; font-size: 20px; font-weight: 600;
   }
   .toggle-btn.active { border-color: var(--accent); color: var(--chalk); }
+  input[type="date"] {
+    width: 100%; padding: 14px; border-radius: 10px; border: 2px solid var(--panel-2);
+    background: var(--panel); color: var(--chalk); font-size: 20px; font-family: 'Barlow Condensed', sans-serif;
+  }
 
   .header-nav { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: -6px; }
   .header-nav a { color: var(--chalk-dim); font-size: 18px; text-decoration: none; }
@@ -378,12 +382,152 @@
     if (error) throw error;
   }
 
+  // Custom (non-Havoc) workouts: used for days like Saturday Hyrox that CF Havoc
+  // never posts, or any day you want to log something other than the class WOD.
+  async function getOrCreateWorkout(dateStr) {
+    const { data: existing, error: findErr } = await sb
+      .from('workouts').select('*').eq('workout_date', dateStr).limit(1);
+    if (findErr) throw findErr;
+    if (existing && existing.length) return existing[0];
+
+    const { data: created, error: insErr } = await sb.from('workouts').insert({
+      workout_date: dateStr,
+      source_title: 'Custom entry (no class WOD posted)',
+      raw_text: 'No Havoc class WOD was scraped for this date — logged as a custom workout.',
+    }).select().single();
+    if (insErr) throw insErr;
+    return created;
+  }
+
+  async function logCustomWorkout({ dateStr, customType, title, timeSeconds, notes }) {
+    const workout = await getOrCreateWorkout(dateStr);
+    const userId = state.session.user.id;
+
+    const { data: segment, error: segErr } = await sb.from('segments').insert({
+      workout_id: workout.id,
+      segment_order: 1,
+      segment_type: 'wod',
+      title,
+      structure_type: 'for_time',
+      raw_text: title,
+      score_type: 'time',
+      source: 'custom',
+      custom_type: customType,
+      user_id: userId,
+    }).select().single();
+    if (segErr) throw segErr;
+
+    const { error: resErr } = await sb.from('wod_results').insert({
+      segment_id: segment.id,
+      score_type: 'time',
+      time_seconds: timeSeconds,
+      notes: notes || null,
+    });
+    if (resErr) throw resErr;
+
+    return workout;
+  }
+
   function navBarHtml() {
-    return `<div class="header-nav"><button class="nav-link-btn" id="changeDayBtn" type="button">Change day</button><a href="summary.html">This Week →</a></div>`;
+    return `<div class="header-nav"><button class="nav-link-btn" id="changeDayBtn" type="button">Change day</button><button class="nav-link-btn" id="customBtn" type="button">Log custom</button><a href="summary.html">This Week →</a></div>`;
   }
   function wireNavBar() {
-    const btn = document.getElementById('changeDayBtn');
-    if (btn) btn.onclick = () => renderDayPicker();
+    const dayBtn = document.getElementById('changeDayBtn');
+    if (dayBtn) dayBtn.onclick = () => renderDayPicker();
+    const customBtn = document.getElementById('customBtn');
+    if (customBtn) customBtn.onclick = () => renderCustomEntry();
+  }
+
+  const CUSTOM_TYPES = [
+    { key: 'hyrox', label: 'Hyrox', defaultTitle: 'Hyrox' },
+    { key: 'zone2_machine', label: 'Zone 2 Machine', defaultTitle: 'Zone 2 — Machine' },
+    { key: 'zone2_run', label: 'Zone 2 Run', defaultTitle: 'Zone 2 — Run' },
+    { key: 'conditioning', label: 'Conditioning', defaultTitle: 'Conditioning' },
+    { key: 'other', label: 'Other', defaultTitle: 'Custom Workout' },
+  ];
+
+  function renderCustomEntry() {
+    let selectedType = 'hyrox';
+    let selectedDate = new Date().toISOString().slice(0, 10);
+
+    function draw() {
+      const typeButtonsHtml = CUSTOM_TYPES.map(t =>
+        `<button class="toggle-btn${t.key === selectedType ? ' active' : ''}" data-type="${t.key}" type="button">${esc(t.label)}</button>`
+      ).join('');
+      const defaultTitle = CUSTOM_TYPES.find(t => t.key === selectedType).defaultTitle;
+
+      root.innerHTML = `
+        ${navBarHtml()}
+        <div class="page-title" style="font-size:32px;">Log a Custom Workout</div>
+        <div class="scheme" style="margin-bottom:16px;">For days like Saturday Hyrox that aren't posted by the gym</div>
+
+        <label for="customDate" style="display:block;color:var(--chalk-dim);font-size:17px;margin-bottom:6px;">Date</label>
+        <input type="date" id="customDate" value="${selectedDate}">
+
+        <div class="toggle-row" id="typeButtons">${typeButtonsHtml}</div>
+
+        <div class="notes-field" style="margin-top:18px;">
+          <label for="customTitle">Title</label>
+          <input type="text" id="customTitle" value="${esc(defaultTitle)}" placeholder="Title">
+        </div>
+
+        <div class="entry-card" style="margin-top:18px;">
+          <div class="score-row">
+            <div class="score-field"><label>Minutes</label><input type="number" id="customMin" value="0" min="0"></div>
+            <div class="score-field"><label>Seconds</label><input type="number" id="customSec" value="0" min="0" max="59"></div>
+          </div>
+        </div>
+
+        <div class="notes-field">
+          <label for="customNotes">Notes (optional)</label>
+          <input type="text" id="customNotes" placeholder="e.g. stations, how it felt">
+        </div>
+
+        ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
+        <button class="log-btn" id="saveCustomBtn">Save custom workout</button>
+        <button class="secondary-btn" id="cancelCustomBtn">Cancel</button>
+      `;
+      wireNavBar();
+
+      document.getElementById('customDate').onchange = (e) => { selectedDate = e.target.value; };
+
+      root.querySelectorAll('#typeButtons .toggle-btn').forEach(btn => {
+        btn.onclick = () => {
+          selectedType = btn.dataset.type;
+          draw();
+        };
+      });
+
+      document.getElementById('cancelCustomBtn').onclick = () => render();
+
+      document.getElementById('saveCustomBtn').onclick = async () => {
+        document.getElementById('saveCustomBtn').disabled = true;
+        const title = document.getElementById('customTitle').value.trim() || 'Custom Workout';
+        const min = parseInt(document.getElementById('customMin').value || '0', 10);
+        const sec = parseInt(document.getElementById('customSec').value || '0', 10);
+        const notes = document.getElementById('customNotes').value.trim() || null;
+        try {
+          await logCustomWorkout({
+            dateStr: selectedDate,
+            customType: selectedType,
+            title,
+            timeSeconds: min * 60 + sec,
+            notes,
+          });
+          state.error = null;
+          root.innerHTML = `<div class="center-msg">✅<br><br>Logged "${esc(title)}" for ${esc(selectedDate)}.</div>
+            <button class="secondary-btn" id="doneCustomBtn" style="margin-top:30px;">Back to today</button>`;
+          document.getElementById('doneCustomBtn').onclick = async () => {
+            await loadWorkoutForDate(new Date().toISOString().slice(0, 10));
+            render();
+          };
+        } catch (e) {
+          state.error = e.message;
+          draw();
+        }
+      };
+    }
+    draw();
   }
 
   async function renderDayPicker() {
@@ -731,7 +875,7 @@
   function render() {
     if (!state.session) { renderAuth(); return; }
     if (!state.workout) {
-      root.innerHTML = `${navBarHtml()}<div class="center-msg">No workout found for today or recently.<br><br>Check that the nightly ingest job is running, or pick an earlier day.</div>`;
+      root.innerHTML = `${navBarHtml()}<div class="center-msg">No class WOD found for today.<br><br>Normal on weekends/holidays — tap "Log custom" above to log something else (like Saturday Hyrox), or "Change day" to review a past workout.</div>`;
       wireNavBar();
       return;
     }
