@@ -174,6 +174,19 @@
   }
   .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 12px; }
   .day-pick-list { display: flex; flex-direction: column; gap: 8px; }
+
+  .review-block { background: var(--panel); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
+  .review-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
+  .review-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 8px 0; border-bottom: 1px solid var(--panel-2); font-size: 19px;
+  }
+  .review-row:last-of-type { border-bottom: none; }
+  .review-set-label { color: var(--chalk-dim); flex-shrink: 0; }
+  .review-set-val { font-family: 'JetBrains Mono', monospace; font-weight: 600; flex: 1; text-align: right; }
+  .review-note { display: block; font-family: 'Barlow Condensed', sans-serif; font-weight: 500; font-style: italic;
+    color: var(--chalk-dim); font-size: 15px; text-align: right; }
+  .review-edit-form { background: var(--panel-2); border-radius: 10px; padding: 12px; margin: 6px 0; }
   .day-pick-row {
     background: var(--panel); border: none; border-radius: 10px; padding: 14px 16px;
     display: flex; justify-content: space-between; align-items: center; width: 100%;
@@ -570,22 +583,313 @@
       <button class="secondary-btn" id="cancelPickBtn" style="margin-top:16px;">Cancel</button>
     `;
     root.querySelectorAll('.day-pick-row').forEach(btn => {
-      btn.onclick = async () => {
-        root.innerHTML = `<div class="center-msg">Loading…</div>`;
-        await loadWorkoutForDate(btn.dataset.date);
-        render();
-      };
+      btn.onclick = () => renderDayReview(btn.dataset.date);
     });
     document.getElementById('cancelPickBtn').onclick = () => render();
   }
 
+  function wodScoreLabel(r) {
+    if (r.score_type === 'time') {
+      if (r.time_seconds == null) return '—';
+      const m = Math.floor(r.time_seconds / 60), s = r.time_seconds % 60;
+      return `${m}:${String(s).padStart(2, '0')}`;
+    }
+    if (r.score_type === 'rounds_reps') return `${r.rounds_completed ?? 0} rds + ${r.extra_reps ?? 0}`;
+    if (r.score_type === 'reps') return `${r.total_reps ?? 0} reps`;
+    if (r.score_type === 'calories') return `${r.calories ?? 0} cal`;
+    return r.notes || 'Logged';
+  }
+
+  // ======================= RENDER: DAY REVIEW =======================
+  // Shows exactly what was logged for a given day, editable set-by-set —
+  // distinct from the entry flow, which is for logging new sets forward.
+  async function renderDayReview(dateStr) {
+    root.innerHTML = `${navBarHtml()}<div class="center-msg">Loading…</div>`;
+
+    const { data: workouts } = await sb.from('workouts').select('*').eq('workout_date', dateStr).limit(1);
+    if (!workouts || !workouts.length) {
+      root.innerHTML = `${navBarHtml()}<div class="center-msg">No workout found for ${esc(dateStr)}.</div>
+        <button class="secondary-btn" id="backBtn" style="margin-top:20px;">← Back</button>`;
+      wireNavBar();
+      document.getElementById('backBtn').onclick = () => renderDayPicker();
+      return;
+    }
+    const workout = workouts[0];
+
+    const { data: segments } = await sb
+      .from('segments').select('*').eq('workout_id', workout.id)
+      .in('segment_type', ['strength', 'wod']).order('segment_order');
+
+    const strengthSegs = (segments || []).filter(s => s.segment_type === 'strength');
+    const wodSegs = (segments || []).filter(s => s.segment_type === 'wod');
+
+    const movementBlocks = [];
+    for (const seg of strengthSegs) {
+      const { data: movs } = await sb
+        .from('segment_movements').select('*, movements(id, name)')
+        .eq('segment_id', seg.id).order('movement_order');
+      for (const m of (movs || [])) {
+        movementBlocks.push({ segment: seg, segMovement: m, movement: m.movements, sets: [] });
+      }
+    }
+    const strengthSegIds = strengthSegs.map(s => s.id);
+    if (strengthSegIds.length) {
+      const { data: allSets } = await sb
+        .from('strength_results').select('*').in('segment_id', strengthSegIds).order('set_number');
+      (allSets || []).forEach(row => {
+        const block = movementBlocks.find(b => b.segment.id === row.segment_id && b.movement.id === row.movement_id);
+        if (block) block.sets.push(row);
+      });
+    }
+
+    const wodBlocks = [];
+    for (const seg of wodSegs) {
+      const { data: results } = await sb.from('wod_results').select('*').eq('segment_id', seg.id);
+      wodBlocks.push({ segment: seg, result: (results && results[0]) || null });
+    }
+
+    let editingKey = null;   // e.g. "movementId_3" for a set, or "wod_<segmentId>"
+    let addingSetFor = null; // movementId currently showing an add-set form
+
+    function draw() {
+      let html = `
+        ${navBarHtml()}
+        <div class="header-nav" style="margin-bottom:-2px;"><button id="backBtn" type="button">← Back</button></div>
+        <div class="page-title" style="font-size:32px;">${esc(dateStr)}</div>
+        <div class="scheme" style="margin-bottom:18px;">${esc(workout.source_title || '')}</div>
+      `;
+      if (state.error) html += `<div class="error-banner">${esc(state.error)}</div>`;
+
+      movementBlocks.forEach(block => {
+        const isBW = isBodyweightMovement(block.movement.name);
+        const prescribedSets = block.segMovement.prescribed_sets || 1;
+        html += `<div class="review-block"><div class="review-title">${esc(block.movement.name)}</div>`;
+        block.sets.forEach(s => {
+          const key = `${block.movement.id}_${s.set_number}`;
+          if (editingKey === key) {
+            html += `
+              <div class="review-edit-form">
+                <div class="score-row">
+                  <div class="score-field"><label>Reps</label><input type="number" id="editReps" value="${s.reps_completed ?? ''}" min="0"></div>
+                  ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="editWeight" value="${s.weight_lbs ?? ''}" min="0"></div>` : ''}
+                </div>
+                <div class="notes-field"><label>Notes</label><input type="text" id="editNotes" value="${esc(s.notes || '')}"></div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="log-btn" id="saveSetBtn" style="margin-top:0;flex:1;">Save</button>
+                  <button class="secondary-btn" id="cancelSetBtn" style="margin-top:0;flex:1;">Cancel</button>
+                </div>
+              </div>`;
+          } else {
+            const valText = isBW
+              ? `${s.reps_completed ?? '?'} reps${s.weight_lbs ? ` @ ${s.weight_lbs} lb` : ''}`
+              : `${s.reps_completed ?? '?'} reps @ ${s.weight_lbs ?? '?'} lb`;
+            html += `
+              <div class="review-row">
+                <span class="review-set-label">Set ${s.set_number}</span>
+                <span class="review-set-val">${valText}${s.notes ? `<span class="review-note">${esc(s.notes)}</span>` : ''}</span>
+                <button class="nav-link-btn" data-edit-set="${key}" type="button">Edit</button>
+              </div>`;
+          }
+        });
+        if (block.sets.length < prescribedSets) {
+          const nextSet = block.sets.length + 1;
+          if (addingSetFor === block.movement.id) {
+            html += `
+              <div class="review-edit-form">
+                <div class="score-row">
+                  <div class="score-field"><label>Reps</label><input type="number" id="addReps" value="${block.segMovement.prescribed_reps ? parseInt(block.segMovement.prescribed_reps, 10) || '' : ''}" min="0"></div>
+                  ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="addWeight" value="0" min="0"></div>` : ''}
+                </div>
+                <div style="display:flex;gap:8px;margin-top:10px;">
+                  <button class="log-btn" id="saveAddBtn" style="margin-top:0;flex:1;">Save Set ${nextSet}</button>
+                  <button class="secondary-btn" id="cancelAddBtn" style="margin-top:0;flex:1;">Cancel</button>
+                </div>
+              </div>`;
+          } else {
+            html += `<button class="nav-link-btn" data-add-set="${block.movement.id}" type="button" style="margin-top:6px;">+ Add set ${nextSet} (${prescribedSets - block.sets.length} remaining)</button>`;
+          }
+        }
+        html += `</div>`;
+      });
+
+      wodBlocks.forEach(wb => {
+        const key = `wod_${wb.segment.id}`;
+        html += `<div class="review-block"><div class="review-title">${esc(wb.segment.title || 'WOD')}</div>`;
+        if (!wb.result) {
+          html += `<button class="nav-link-btn" data-log-wod="${wb.segment.id}" type="button">+ Log this WOD</button>`;
+        } else if (editingKey === key) {
+          const st = wb.result.score_type;
+          let fieldsHtml = '';
+          if (st === 'time') {
+            const m = Math.floor((wb.result.time_seconds || 0) / 60), s = (wb.result.time_seconds || 0) % 60;
+            fieldsHtml = `<div class="score-row">
+              <div class="score-field"><label>Minutes</label><input type="number" id="editMin" value="${m}" min="0"></div>
+              <div class="score-field"><label>Seconds</label><input type="number" id="editSec" value="${s}" min="0" max="59"></div>
+            </div>`;
+          } else if (st === 'rounds_reps') {
+            fieldsHtml = `<div class="score-row">
+              <div class="score-field"><label>Rounds</label><input type="number" id="editRounds" value="${wb.result.rounds_completed ?? 0}" min="0"></div>
+              <div class="score-field"><label>+ Reps</label><input type="number" id="editExtra" value="${wb.result.extra_reps ?? 0}" min="0"></div>
+            </div>`;
+          } else if (st === 'reps') {
+            fieldsHtml = `<div class="score-row"><div class="score-field"><label>Total reps</label><input type="number" id="editTotalReps" value="${wb.result.total_reps ?? 0}" min="0"></div></div>`;
+          } else if (st === 'calories') {
+            fieldsHtml = `<div class="score-row"><div class="score-field"><label>Calories</label><input type="number" id="editCals" value="${wb.result.calories ?? 0}" min="0"></div></div>`;
+          }
+          html += `
+            <div class="review-edit-form">
+              ${fieldsHtml}
+              <div class="notes-field"><label>Notes</label><input type="text" id="editWodNotes" value="${esc(wb.result.notes || '')}"></div>
+              <div style="display:flex;gap:8px;margin-top:10px;">
+                <button class="log-btn" id="saveWodBtn" style="margin-top:0;flex:1;">Save</button>
+                <button class="secondary-btn" id="cancelWodBtn" style="margin-top:0;flex:1;">Cancel</button>
+              </div>
+            </div>`;
+        } else {
+          html += `
+            <div class="review-row">
+              <span class="review-set-label">${wb.result.rx_or_scaled ? wb.result.rx_or_scaled : 'Score'}</span>
+              <span class="review-set-val">${esc(wodScoreLabel(wb.result))}${wb.result.notes ? `<span class="review-note">${esc(wb.result.notes)}</span>` : ''}</span>
+              <button class="nav-link-btn" data-edit-wod="${key}" type="button">Edit</button>
+            </div>`;
+        }
+        html += `</div>`;
+      });
+
+      if (!movementBlocks.length && !wodBlocks.length) {
+        html += `<div class="center-msg" style="margin-top:20px;">Nothing to review for this day.</div>`;
+      }
+
+      root.innerHTML = html;
+      wireNavBar();
+      document.getElementById('backBtn').onclick = () => renderDayPicker();
+
+      root.querySelectorAll('[data-edit-set]').forEach(btn => {
+        btn.onclick = () => { editingKey = btn.dataset.editSet; draw(); };
+      });
+      root.querySelectorAll('[data-add-set]').forEach(btn => {
+        btn.onclick = () => { addingSetFor = Number(btn.dataset.addSet); draw(); };
+      });
+      root.querySelectorAll('[data-edit-wod]').forEach(btn => {
+        btn.onclick = () => { editingKey = btn.dataset.editWod; draw(); };
+      });
+      root.querySelectorAll('[data-log-wod]').forEach(btn => {
+        btn.onclick = async () => {
+          // Route into the normal single-task WOD entry flow for just this WOD
+          const seg = wodSegs.find(s => s.id === Number(btn.dataset.logWod));
+          state.workout = workout;
+          state.tasks = [{ type: 'wod', segment: seg }];
+          state.taskIndex = 0;
+          renderWod(state.tasks[0]);
+        };
+      });
+
+      const cancelSetBtn = document.getElementById('cancelSetBtn');
+      if (cancelSetBtn) cancelSetBtn.onclick = () => { editingKey = null; draw(); };
+      const cancelAddBtn = document.getElementById('cancelAddBtn');
+      if (cancelAddBtn) cancelAddBtn.onclick = () => { addingSetFor = null; draw(); };
+      const cancelWodBtn = document.getElementById('cancelWodBtn');
+      if (cancelWodBtn) cancelWodBtn.onclick = () => { editingKey = null; draw(); };
+
+      const saveSetBtn = document.getElementById('saveSetBtn');
+      if (saveSetBtn) saveSetBtn.onclick = async () => {
+        saveSetBtn.disabled = true;
+        const [movementId, setNumberStr] = editingKey.split('_');
+        const block = movementBlocks.find(b => String(b.movement.id) === movementId);
+        const setRow = block.sets.find(s => String(s.set_number) === setNumberStr);
+        const repsEl = document.getElementById('editReps');
+        const weightEl = document.getElementById('editWeight');
+        const notesEl = document.getElementById('editNotes');
+        const reps = parseInt(repsEl.value, 10);
+        const weight = weightEl ? parseInt(weightEl.value, 10) : null;
+        try {
+          const { error } = await sb.from('strength_results').update({
+            reps_completed: isNaN(reps) ? setRow.reps_completed : reps,
+            weight_lbs: weightEl ? (isNaN(weight) ? null : weight) : setRow.weight_lbs,
+            notes: notesEl.value.trim() || null,
+          }).eq('id', setRow.id);
+          if (error) throw error;
+          setRow.reps_completed = isNaN(reps) ? setRow.reps_completed : reps;
+          if (weightEl) setRow.weight_lbs = isNaN(weight) ? null : weight;
+          setRow.notes = notesEl.value.trim() || null;
+          state.error = null;
+          editingKey = null;
+          draw();
+        } catch (e) {
+          state.error = e.message;
+          draw();
+        }
+      };
+
+      const saveAddBtn = document.getElementById('saveAddBtn');
+      if (saveAddBtn) saveAddBtn.onclick = async () => {
+        saveAddBtn.disabled = true;
+        const block = movementBlocks.find(b => b.movement.id === addingSetFor);
+        const nextSet = block.sets.length + 1;
+        const repsEl = document.getElementById('addReps');
+        const weightEl = document.getElementById('addWeight');
+        const reps = parseInt(repsEl.value, 10);
+        const weight = weightEl ? parseInt(weightEl.value, 10) : null;
+        try {
+          const { data, error } = await sb.from('strength_results').insert({
+            segment_id: block.segment.id,
+            movement_id: block.movement.id,
+            set_number: nextSet,
+            reps_completed: isNaN(reps) ? null : reps,
+            weight_lbs: weightEl ? (isNaN(weight) ? null : weight) : null,
+          }).select().single();
+          if (error) throw error;
+          block.sets.push(data);
+          state.error = null;
+          addingSetFor = null;
+          draw();
+        } catch (e) {
+          state.error = e.message;
+          draw();
+        }
+      };
+
+      const saveWodBtn = document.getElementById('saveWodBtn');
+      if (saveWodBtn) saveWodBtn.onclick = async () => {
+        saveWodBtn.disabled = true;
+        const segId = editingKey.replace('wod_', '');
+        const wb = wodBlocks.find(w => `wod_${w.segment.id}` === editingKey);
+        const payload = { notes: document.getElementById('editWodNotes').value.trim() || null };
+        const st = wb.result.score_type;
+        if (st === 'time') {
+          const m = parseInt(document.getElementById('editMin').value || '0', 10);
+          const s = parseInt(document.getElementById('editSec').value || '0', 10);
+          payload.time_seconds = m * 60 + s;
+        } else if (st === 'rounds_reps') {
+          payload.rounds_completed = parseInt(document.getElementById('editRounds').value || '0', 10);
+          payload.extra_reps = parseInt(document.getElementById('editExtra').value || '0', 10);
+        } else if (st === 'reps') {
+          payload.total_reps = parseInt(document.getElementById('editTotalReps').value || '0', 10);
+        } else if (st === 'calories') {
+          payload.calories = parseInt(document.getElementById('editCals').value || '0', 10);
+        }
+        try {
+          const { error } = await sb.from('wod_results').update(payload).eq('id', wb.result.id);
+          if (error) throw error;
+          Object.assign(wb.result, payload);
+          state.error = null;
+          editingKey = null;
+          draw();
+        } catch (e) {
+          state.error = e.message;
+          draw();
+        }
+      };
+    }
+    draw();
+  }
 
   function renderAuth() {
     root.innerHTML = `
       <div class="auth-wrap">
         <img src="https://crossfithavoc.com/wp-content/uploads/2022/05/cropped-crossfit-havoc-vctr-page-001.jpg" alt="CrossFit Havoc" class="havoc-logo">
         <div class="auth-title">Tracker</div>
-        <div class="auth-sub">Sign in with your email — we'll send a magic link, no password needed.</div>
+        <div class="auth-sub">Sign in with your email — we'll send a magic link.</div>
         ${state.error ? `<div class="error-banner">${esc(state.error)}</div>` : ''}
         <input type="email" id="emailInput" placeholder="you@example.com" autocomplete="email">
         <button class="log-btn" id="sendLinkBtn">Send magic link</button>
