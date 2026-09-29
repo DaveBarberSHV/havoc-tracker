@@ -69,6 +69,8 @@
   .movement-row:active { background: var(--panel-2); }
   .movement-row .mv-name { font-size: 21px; font-weight: 600; }
   .movement-row .mv-count { color: var(--chalk-dim); font-size: 16px; }
+  .section-label { color: var(--chalk-dim); font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em;
+    margin: 16px 0 8px; font-weight: 600; }
 
   .best-card {
     background: var(--accent); color: var(--chalk); border-radius: var(--radius); padding: 18px 20px;
@@ -116,6 +118,11 @@
   function fmtDate(iso) {
     const d = new Date(iso);
     return `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+  }
+  function fmtTime(totalSeconds) {
+    if (totalSeconds == null) return '—';
+    const m = Math.floor(totalSeconds / 60), s = totalSeconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
   }
 
   // Same bodyweight detection as the main app, so history correctly labels
@@ -203,8 +210,16 @@
   }
 
   // ======================= MOVEMENT PICKER =======================
+  const CUSTOM_TYPE_LABELS = {
+    hyrox: 'Hyrox',
+    zone2_machine: 'Zone 2 — Machine',
+    zone2_run: 'Zone 2 — Run',
+    conditioning: 'Conditioning',
+    other: 'Other',
+  };
+
   async function renderMovementPicker() {
-    root.innerHTML = `${topBarHtml(false)}<div class="page-title">Movement History</div><div class="center-msg" style="margin-top:20px;">Loading movements…</div>`;
+    root.innerHTML = `${topBarHtml(false)}<div class="page-title">Movement History</div><div class="center-msg" style="margin-top:20px;">Loading…</div>`;
     wireTopBar();
 
     const { data, error } = await sb
@@ -227,24 +242,49 @@
       .map(id => ({ id, name: namesById[id], count: countsById[id] }))
       .sort((a, b) => a.name.localeCompare(b.name));
 
+    // Custom workouts (Hyrox, Zone 2, etc.) — RLS already scopes this to your own entries.
+    const { data: customSegs } = await sb
+      .from('segments').select('custom_type').eq('source', 'custom').not('custom_type', 'is', null);
+    const customCounts = {};
+    (customSegs || []).forEach(s => {
+      customCounts[s.custom_type] = (customCounts[s.custom_type] || 0) + 1;
+    });
+    const customList = Object.keys(customCounts)
+      .map(type => ({ type, label: CUSTOM_TYPE_LABELS[type] || type, count: customCounts[type] }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+
     function draw(filterText) {
-      const filtered = filterText
+      const filteredMovements = filterText
         ? movementList.filter(m => m.name.toLowerCase().includes(filterText.toLowerCase()))
         : movementList;
+      const filteredCustom = filterText
+        ? customList.filter(c => c.label.toLowerCase().includes(filterText.toLowerCase()))
+        : customList;
 
-      const rowsHtml = filtered.map(m =>
-        `<button class="movement-row" data-id="${esc(m.id)}" data-name="${esc(m.name)}">
+      const movementRowsHtml = filteredMovements.map(m =>
+        `<button class="movement-row" data-kind="movement" data-id="${esc(m.id)}" data-name="${esc(m.name)}">
           <span class="mv-name">${esc(m.name)}</span>
           <span class="mv-count">${m.count} session${m.count === 1 ? '' : 's'}</span>
         </button>`
-      ).join('') || `<div class="center-msg" style="margin-top:20px;font-size:19px;">No movements logged yet.</div>`;
+      ).join('');
+
+      const customRowsHtml = filteredCustom.map(c =>
+        `<button class="movement-row" data-kind="custom" data-type="${esc(c.type)}" data-label="${esc(c.label)}">
+          <span class="mv-name">${esc(c.label)}</span>
+          <span class="mv-count">${c.count} session${c.count === 1 ? '' : 's'}</span>
+        </button>`
+      ).join('');
+
+      const nothingYet = !filteredMovements.length && !filteredCustom.length;
 
       root.innerHTML = `
         ${topBarHtml(false)}
         <div class="page-title">Movement History</div>
-        <div class="sub">Pick a lift to see every session over time</div>
-        <input type="text" class="search-input" id="searchInput" placeholder="Search movements…" value="${esc(filterText || '')}">
-        <div id="movementRows">${rowsHtml}</div>
+        <div class="sub">Pick a lift or custom workout to see every session over time</div>
+        <input type="text" class="search-input" id="searchInput" placeholder="Search…" value="${esc(filterText || '')}">
+        ${nothingYet ? `<div class="center-msg" style="margin-top:20px;font-size:19px;">Nothing logged yet.</div>` : ''}
+        ${filteredMovements.length ? `<div class="section-label">Movements</div><div>${movementRowsHtml}</div>` : ''}
+        ${filteredCustom.length ? `<div class="section-label">Custom Workouts</div><div>${customRowsHtml}</div>` : ''}
       `;
       wireTopBar();
       const searchEl = document.getElementById('searchInput');
@@ -254,7 +294,13 @@
         searchEl.setSelectionRange(searchEl.value.length, searchEl.value.length);
       }
       document.querySelectorAll('.movement-row').forEach(btn => {
-        btn.onclick = () => renderMovementDetail(btn.dataset.id, btn.dataset.name);
+        btn.onclick = () => {
+          if (btn.dataset.kind === 'custom') {
+            renderCustomTypeDetail(btn.dataset.type, btn.dataset.label);
+          } else {
+            renderMovementDetail(btn.dataset.id, btn.dataset.name);
+          }
+        };
       });
     }
     draw('');
@@ -332,6 +378,64 @@
         return { val, isPR };
       });
     }
+
+    root.innerHTML = html;
+    wireTopBar(() => renderMovementPicker());
+  }
+
+  // ======================= CUSTOM WORKOUT TYPE DETAIL =======================
+  // Hyrox, Zone 2, Conditioning, etc. — scored the opposite way from strength
+  // lifts: lower time is better, so "best" here means fastest, not heaviest.
+  async function renderCustomTypeDetail(customType, label) {
+    root.innerHTML = `${topBarHtml(true)}<div class="center-msg">Loading history…</div>`;
+    wireTopBar(() => renderMovementPicker());
+
+    const { data: segs, error } = await sb
+      .from('segments').select('id, title, workouts(workout_date)')
+      .eq('source', 'custom').eq('custom_type', customType);
+    if (error) {
+      root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(error.message)}</div>`;
+      wireTopBar(() => renderMovementPicker());
+      return;
+    }
+
+    const segIds = (segs || []).map(s => s.id);
+    let results = [];
+    if (segIds.length) {
+      const { data } = await sb.from('wod_results').select('*').in('segment_id', segIds);
+      results = data || [];
+    }
+
+    const sessions = results.map(r => {
+      const seg = (segs || []).find(s => s.id === r.segment_id);
+      return {
+        workout_date: seg && seg.workouts ? seg.workouts.workout_date : null,
+        title: seg ? seg.title : label,
+        time_seconds: r.time_seconds,
+        notes: r.notes,
+      };
+    }).sort((a, b) => (a.workout_date || '').localeCompare(b.workout_date || ''));
+
+    let html = `
+      ${topBarHtml(true)}
+      <div class="page-title">${esc(label)}</div>
+      <div class="sub">${sessions.length} session${sessions.length === 1 ? '' : 's'} logged — different format each time, so shown chronologically rather than ranked</div>
+    `;
+
+    if (!sessions.length) {
+      html += `<div class="center-msg" style="margin-top:20px;">No sessions yet.</div>`;
+      root.innerHTML = html;
+      wireTopBar(() => renderMovementPicker());
+      return;
+    }
+
+    const rows = sessions.slice().reverse().map(s => {
+      return `<div class="session-row">
+        <span class="s-date">${fmtDate(s.workout_date)}</span>
+        <span class="s-val">${fmtTime(s.time_seconds)}${s.notes ? `<span class="s-notes">${esc(s.notes)}</span>` : ''}</span>
+      </div>`;
+    }).join('');
+    html += `<div>${rows}</div>`;
 
     root.innerHTML = html;
     wireTopBar(() => renderMovementPicker());
