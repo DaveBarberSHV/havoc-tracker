@@ -281,7 +281,12 @@
     const m = String(text).match(/(\d+)/);
     return m ? parseInt(m[1], 10) : null;
   }
-  function epley(weight, reps) { return weight * (1 + reps / 30); }
+  function epley(weight, reps) {
+    // A true 1-rep set IS the 1RM already — nothing to estimate. Only
+    // extrapolate for multi-rep sets, where the formula actually applies.
+    if (reps <= 1) return weight;
+    return weight * (1 + reps / 30);
+  }
 
   // Heuristic list of common bodyweight/no-load movements — no schema change
   // needed, and works retroactively on every movement already in the database.

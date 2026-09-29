@@ -91,7 +91,12 @@
   const root = document.getElementById('root');
 
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
-  function epley(weight, reps) { return weight * (1 + reps / 30); }
+  function epley(weight, reps) {
+    // A true 1-rep set IS the 1RM already — nothing to estimate. Only
+    // extrapolate for multi-rep sets, where the formula actually applies.
+    if (reps <= 1) return weight;
+    return weight * (1 + reps / 30);
+  }
   function isoDate(d) { return d.toISOString().slice(0, 10); }
   function fmtShort(dstr) {
     const d = new Date(dstr + 'T12:00:00');
