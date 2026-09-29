@@ -222,8 +222,7 @@
     color: var(--chalk); font-family: 'Barlow Condensed', sans-serif; text-align: left;
   }
   .day-pick-row:active { background: var(--panel-2); }
-  .day-pick-row .dp-date { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 600; }
-  .day-pick-row .dp-title { color: var(--chalk-dim); font-size: 16px; text-align: right; }
+  .day-pick-row .dp-date { font-size: 21px; font-weight: 600; }
   .progress { color: var(--chalk-dim); font-size: 16px; margin-bottom: 8px; }
 </style>
 </head>
@@ -275,6 +274,22 @@
   function fmtDate(iso) {
     const d = new Date(iso);
     return `${d.getMonth()+1}/${d.getDate()}/${String(d.getFullYear()).slice(-2)}`;
+  }
+  // For plain 'YYYY-MM-DD' date strings (workout_date), NOT full timestamps —
+  // parses as a local date directly, avoiding the classic bug where
+  // new Date('YYYY-MM-DD') is read as UTC midnight and can show the wrong day
+  // in any timezone behind UTC (e.g. US Eastern).
+  function parseDateOnly(dateStr) {
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+  }
+  function fmtShortWeekday(dateStr) {
+    const d = parseDateOnly(dateStr);
+    return `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${d.getMonth() + 1}/${d.getDate()}`;
+  }
+  function fmtFullDate(dateStr) {
+    const d = parseDateOnly(dateStr);
+    return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   }
   function parseLeadingInt(text) {
     if (!text) return null;
@@ -637,8 +652,7 @@
 
     const rows = (recentWorkouts || []).map(w => `
       <button class="day-pick-row" data-date="${esc(w.workout_date)}">
-        <span class="dp-date">${w.workout_date}</span>
-        <span class="dp-title">${esc(w.source_title || '')}</span>
+        <span class="dp-date">${esc(fmtFullDate(w.workout_date))}</span>
       </button>`).join('');
 
     root.innerHTML = `
@@ -1261,7 +1275,7 @@
       ${topBarHtml(false)}
       <div class="center-msg">
         ✅<br><br>
-        Workout logged for ${esc(state.workout.workout_date)}.<br><br>
+        Workout logged for ${esc(fmtShortWeekday(state.workout.workout_date))}.<br><br>
         Nice work.
       </div>
       <button class="secondary-btn" id="redoBtn" style="margin-top:30px;">Re-Enter Results</button>
