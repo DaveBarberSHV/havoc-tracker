@@ -2,13 +2,21 @@ name: Nightly WOD Ingest
 
 on:
   schedule:
-    # Cron is UTC only, and GitHub Actions cron does NOT observe daylight saving.
-    # 9:30pm ET is 01:30 UTC during EDT (Mar-Nov) and 02:30 UTC during EST (Nov-Mar).
-    # Two schedules below cover both; the script itself no-ops if the latest post
-    # isn't new, so an extra run causes no harm. Both are Tue-Sat UTC because
-    # 9:30pm Mon-Fri ET rolls into the next UTC day.
-    - cron: '30 1 * * 2-6'   # EDT covers: Mon-Fri 9:30pm ET
-    - cron: '30 2 * * 2-6'   # EST covers: Mon-Fri 9:30pm ET
+    # Cron is UTC only and does NOT observe daylight saving, so we cover both
+    # EDT and EST year-round with separate lines rather than trying to adjust
+    # the schedule twice a year. Running every day (not just Mon-Fri) is
+    # deliberate: the script safely no-ops when there's nothing new, and this
+    # avoids any day-of-week mapping mistakes (an earlier version of this file
+    # had a gap that missed checking for Monday's post on Sunday evening).
+    #
+    # Evening checks, aimed at ~9:30pm ET (Havoc's ~9:10pm posting deadline):
+    - cron: '30 1 * * *'   # 9:30pm EDT
+    - cron: '30 2 * * *'   # 9:30pm EST
+    # Morning backup, aimed at ~6am ET — catches a late post or a delayed
+    # GitHub Actions run (scheduled workflows can run late, sometimes by
+    # hours, especially soon after being set up) before you head to the gym:
+    - cron: '0 10 * * *'   # 6:00am EDT
+    - cron: '0 11 * * *'   # 6:00am EST
   workflow_dispatch: {}       # lets you trigger it manually from the Actions tab
 
 jobs:
