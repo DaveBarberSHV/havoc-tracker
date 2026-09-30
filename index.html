@@ -338,6 +338,16 @@
     if (state.session) {
       await loadWorkoutForDate(new Date().toISOString().slice(0, 10));
     }
+
+    // If we arrived via a menu link from another page (This Week, Movement
+    // History), jump straight to the requested screen instead of the default.
+    const requestedAction = new URLSearchParams(window.location.search).get('action');
+    if (requestedAction && state.session) {
+      history.replaceState(null, '', window.location.pathname); // clean the URL, avoid re-triggering on refresh
+      if (requestedAction === 'pickday') { renderDayPicker(); return; }
+      if (requestedAction === 'logcustom') { renderCustomEntry(); return; }
+    }
+
     render();
   }
 
