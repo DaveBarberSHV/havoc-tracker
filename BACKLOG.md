@@ -1,63 +1,110 @@
 # Havoc Tracker — Backlog
 
-Deferred items, in no particular priority order unless noted. Update this file
-whenever something gets deferred or completed — check items off rather than
-deleting them, so we keep a record of what's already been considered.
+Last updated: Oct 5, 2026
 
-## Auth / accounts
-- [ ] **Verify safeharbourventures.com in Resend** — removes the sandbox
-      restriction so magic links can go to any email (davidrbarber@mac.com,
-      wife, gym friends), not just the Resend account owner's address. Use a
-      dedicated sender like havoc@safeharbourventures.com, not a personal inbox.
-- [ ] **Passkey / Face ID sign-in** — would remove the email-hop entirely
-      (no magic link, no storage-silo risk). Supabase's Passkey support is
-      currently in beta; expect real-device debugging when we build this.
-- [ ] **Decide on a single permanent identity** — early test data currently
-      lives under davidrbarber@mac.com; more recent testing under
-      dave@safeharbourventures.com. Consolidate before inviting others.
-- [ ] **Native app via Capacitor + TestFlight** — fallback if Passkeys aren't
-      enough. Requires $99/yr Apple Developer account, builds expire every
-      90 days and need re-uploading. Bigger lift; only pursue if the web
-      approach genuinely falls short.
+Check items off rather than deleting them, so there's a record of what's been
+considered. Add new ideas under the closest heading as they come up.
 
-## Entry app
-- [x] Optional notes field on strength sets and WOD results
-- [x] Duplicate-entry prevention (unique constraints + upsert)
-- [x] Day picker to log/review a past workout
-- [ ] **Faster weight entry** (in progress) — press-and-hold acceleration on
-      the +/- buttons, plus tap-the-number for direct numeric entry. Also
-      fixes the iOS double-tap-zoom bug on the stepper buttons.
-- [ ] **Editable reps** for strength sets — currently defaults to the leading
-      number parsed from the prescribed scheme (e.g. "8-10" → 8) with no way
-      to adjust if you actually did a different rep count.
-- [ ] **Custom/replacement workout logging** — schema already supports this
-      (segments.source='custom', custom_type, skipped flag) but there's no
-      UI for it yet. Needed for days you sub in Zone 2, Hyrox, etc. instead
-      of the class WOD.
-- [ ] **Undo / edit affordance** — no in-app way to fix a wrong entry once
-      logged; currently requires editing directly in Supabase's Table Editor.
+---
 
-## History & insights
-- [ ] **Movement history view** — pick a lift, see every session over time
-      (weight, reps, est. 1RM) as a list + simple trend chart. Directly
-      answers the original "what did I lift last time" problem.
-- [ ] **WOD repeat detection** — wod_fingerprints table exists in the schema
-      but isn't populated. Needs a fingerprinting step added to the ingest
-      pipeline (normalize movements + rep scheme into a comparable key) so
-      repeat WODs can be matched and compared automatically.
-- [ ] **Weekly summary: trend vs. last week** — current summary shows this
-      week only; comparing volume/PRs against the prior week would show
-      real week-over-week progress.
+## Done
 
-## Data pipeline
-- [ ] **Deeper historical backfill** — currently ~3 months loaded (capped by
-      --max-posts). Low priority since old prescribed-only data (no results
-      attached) has limited value — see the "why backfill" discussion.
-- [ ] **Garmin integration** — pull HR/activity data and match it to workout
-      days by date/time. The `activities` table is already stubbed in the
-      schema for this. Original motivating goal for the whole project;
-      revisit once the core logging loop is solid.
+**Sign-in and accounts**
+- [x] Magic-link sign-in that stays signed in (use a Safari bookmark, not Home Screen)
+- [x] Resend domain verified, so sign-in emails reach any address (not just the account owner)
+- [x] Per-user data isolation (row-level security), tested across multiple real accounts
+- [x] Settled on dave@safeharbourventures.com as the main identity
 
-## Multi-user rollout
-- [ ] Invite wife / gym friends — blocked on the Resend domain verification
-      above, plus one more clean end-to-end test before wider rollout.
+**Daily entry**
+- [x] Weight entry: hold-to-accelerate buttons, tap-the-number to type, no accidental zoom
+- [x] Bodyweight movements: reps-only entry, optional added weight (e.g. GHD with a ball)
+- [x] Cardio rounds (bike/row/ski/run): minutes, seconds, optional calories
+- [x] Resume where you left off after closing the app mid-workout
+- [x] Duplicate-entry protection; optional notes on every entry
+- [x] Pick a Day: review any past day and edit or add individual sets
+- [x] Custom workouts for days the gym doesn't post (Hyrox, Zone 2, conditioning, other)
+- [x] Hamburger menu on every page, with a back arrow only where there's somewhere to go back to
+- [x] WOD details: written description, benchmark name, and the full post as published
+
+**Records and history**
+- [x] Weekly summary (days logged, reps, volume, PRs)
+- [x] Movement History for every lift, plus a plain chronological list for custom workouts
+- [x] Actual 1RM (a real single) tracked separately from calculated 1RM (estimated)
+- [x] Personal Records page listing every lift's records
+- [x] Enter a past PR by hand, including lifts not on the list and bodyweight rep records
+
+**Reliability**
+- [x] Nightly job runs four times a day, every day, with cache-busting
+- [x] Nightly job no longer erases logged results when it re-runs on an already-loaded day
+- [x] Permission fixes: custom workouts on no-post days, adding new lift names
+
+---
+
+## Open
+
+### Verify soon
+- [ ] **Check the first new workout after the latest deploy.** The WOD description and
+      benchmark name come from Claude's reading of the post and couldn't be tested live.
+      Confirm the description looks right on that day's WOD screen.
+- [ ] **Ask testers whether any logged results ever disappeared.** The nightly-job bug
+      (now fixed) could have erased a day's results if it ran at the wrong moment. Unclear
+      whether it ever did.
+- [ ] Confirm Supabase's email sender is havoc@safeharbourventures.com (the alias exists).
+- [ ] Rerun the usage queries (check_usage.sql) in a week to see who's actually logging.
+
+### Rollout
+- [ ] Widen beyond the current handful of testers once things stay quiet for a stretch
+- [ ] Decide whether to keep the current github.io URL or move to a custom domain.
+      Cheapest to change before many people have it bookmarked.
+- [ ] A simple feedback channel (group text or shared note) so reports don't all route through one person
+- [ ] Resend free tier is 100 emails/day; fine for now, revisit if invites come in waves
+
+### Entry app
+- [ ] **Editable reps** for strength sets. Currently locked to the number in the prescribed
+      scheme (a range like "8-10" is read as 8).
+- [ ] **Delete a mistaken set or WOD result** from Day Review (today you can edit, but not delete,
+      except for hand-entered PRs).
+- [ ] **Passkey / Face ID sign-in** would remove the email step entirely. Supabase's support
+      is still in beta, so expect real-device debugging.
+- [ ] Native app via Capacitor + TestFlight, as a fallback if the web approach ever falls short.
+      Needs a $99/yr Apple developer account; builds expire every 90 days.
+
+### History and insights
+- [ ] **Repeat-WOD detection**: when today's WOD matches one you've done, show past attempts side
+      by side. The wod_fingerprints table exists but isn't filled in. The new WOD names and
+      descriptions give a much better starting point than before.
+- [ ] Weekly summary: compare against last week, not just this week
+- [ ] Movement History's "N sessions" label actually counts sets. Count distinct workouts instead.
+- [ ] Weekly PR cards can show a meaningless estimate for bodyweight lifts done with added
+      weight (e.g. GHD with a ball). Skip estimate logic for rep-record movements.
+- [ ] Clean-up tool for lift names: typos in custom lifts ("Zurcher" vs "Zercher") create
+      separate lifts, and there's no way to merge them yet.
+
+### Data pipeline
+- [ ] If Havoc edits a post after publishing, the change is now ignored (the safe trade-off).
+      A proper "update in place without touching results" path would handle this.
+- [ ] Add WOD descriptions to older days (they currently use the parsed movement list plus the
+      full post, which works well enough). Only worth doing with an in-place update, never a rebuild.
+- [ ] Deeper historical backfill (about 3 months loaded). Low value: old days have no results attached.
+- [ ] **Garmin integration**: pull heart rate and activity data and match it to workout days.
+      The activities table is stubbed. This was the original goal for the whole project.
+
+### Housekeeping
+- [ ] Save the click-test scripts into the repo (tests/ folder). They currently live only in
+      the working environment and caught several real bugs that syntax checks missed.
+
+---
+
+## Things worth remembering
+
+- **Never run the nightly job with --force on a day people have logged.** It rebuilds the day's
+  workout and erases everyone's results for it. Same for the backfill script's --force.
+- **Supabase free tier allows 2 projects per person, across all organizations.** Creating
+  another organization does not give extra free projects. When one project needs Pro, move
+  that one to its own organization (a project transfer keeps its URL and keys unchanged).
+- **Home Screen icons keep separate storage from Safari** on iPhone, so sign-in doesn't carry
+  over. Use a Safari bookmark. A full PWA wouldn't change this.
+- **Deploy order for changes that touch the database:** run the SQL first, then push the code.
+- **After deploying, load the app once with ?v=N on the end** to get past a stale cached copy.
+- The GitHub repo is public (required for free GitHub Pages). Only the Supabase publishable
+  key is visible, and that's designed to be public. Real secrets stay in GitHub's encrypted secrets.
