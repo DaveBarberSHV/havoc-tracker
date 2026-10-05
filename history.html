@@ -69,6 +69,15 @@
   .movement-row:active { background: var(--panel-2); }
   .movement-row .mv-name { font-size: 21px; font-weight: 600; }
   .movement-row .mv-count { color: var(--chalk-dim); font-size: 16px; }
+  .pr-board-btn { background: var(--accent); margin-bottom: 14px; }
+  .pr-board-btn:active { background: var(--accent-dim); }
+  .pr-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    background: var(--panel); border-radius: 10px; padding: 14px 16px; margin-bottom: 8px; }
+  .pr-row .pr-name { font-size: 21px; font-weight: 600; }
+  .pr-row .pr-vals { text-align: right; flex-shrink: 0; }
+  .pr-row .pr-main { font-family: 'JetBrains Mono', monospace; font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .pr-row .pr-main.none { color: var(--chalk-dim); font-size: 20px; }
+  .pr-row .pr-sub { color: var(--chalk-dim); font-size: 15px; }
   .section-label { color: var(--chalk-dim); font-size: 16px; text-transform: uppercase; letter-spacing: 0.05em;
     margin: 16px 0 8px; font-weight: 600; }
 
@@ -90,6 +99,8 @@
   .session-row .s-date { color: var(--chalk-dim); font-size: 17px; }
   .session-row .s-val { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
   .session-row .s-pr { color: var(--accent); font-size: 15px; font-weight: 700; margin-left: 6px; }
+  .session-row .s-pr.s-est { color: var(--chalk-dim); }
+  .best-card.est { background: var(--panel); border: 2px solid var(--accent); }
   .session-row .s-notes { display: block; color: var(--chalk-dim); font-size: 15px; margin-top: 2px; font-style: italic; }
 
   .center-msg { text-align: center; color: var(--chalk-dim); font-size: 22px; margin-top: 60px; line-height: 1.5; }
@@ -284,12 +295,17 @@
         ${topBarHtml(false)}
         <div class="page-title">Movement History</div>
         <div class="sub">Pick a lift or custom workout to see every session over time</div>
+        <button class="movement-row pr-board-btn" id="prBoardBtn" type="button">
+          <span class="mv-name">🏆 Personal Records</span>
+          <span class="mv-count" style="color:var(--chalk);">all lifts →</span>
+        </button>
         <input type="text" class="search-input" id="searchInput" placeholder="Search…" value="${esc(filterText || '')}">
         ${nothingYet ? `<div class="center-msg" style="margin-top:20px;font-size:19px;">Nothing logged yet.</div>` : ''}
         ${filteredMovements.length ? `<div class="section-label">Movements</div><div>${movementRowsHtml}</div>` : ''}
         ${filteredCustom.length ? `<div class="section-label">Custom Workouts</div><div>${customRowsHtml}</div>` : ''}
       `;
       wireTopBar();
+      document.getElementById('prBoardBtn').onclick = () => renderPrBoard();
       const searchEl = document.getElementById('searchInput');
       searchEl.oninput = () => draw(searchEl.value);
       if (filterText !== undefined) {
@@ -338,7 +354,19 @@
       return;
     }
 
-    if (isBodyweight) {
+    // Cardio rounds (bike/row/ski/run) are identified by their data: they carry a
+    // duration and/or calories rather than reps and pounds. A plain list is the
+    // honest display — there's no "best" to rank.
+    const isCardio = sessions.some(s => s.duration_seconds != null || s.calories != null);
+
+    if (isCardio) {
+      html += sessionListHtml(sessions, (s) => {
+        const parts = [];
+        if (s.duration_seconds != null) parts.push(fmtTime(s.duration_seconds));
+        if (s.calories != null) parts.push(`${s.calories} cal`);
+        return { val: parts.length ? parts.join(' · ') : 'Completed', isPR: false };
+      });
+    } else if (isBodyweight) {
       let bestRow = sessions[0];
       sessions.forEach(s => { if ((s.reps_completed || 0) > (bestRow.reps_completed || 0)) bestRow = s; });
       html += `
@@ -355,34 +383,115 @@
         return { val, isPR };
       });
     } else {
-      let bestRow = null, bestEst = null, bestSource = null;
+      // Two records, deliberately kept apart:
+      //   actual     = heaviest TRUE single (a lift you really did)
+      //   calculated = highest Epley estimate from multi-rep sets (an extrapolation)
+      let actualRow = null, calcRow = null, calcVal = null;
       sessions.forEach(s => {
         if (!s.weight_lbs || !s.reps_completed) return;
-        const est = epley(s.weight_lbs, s.reps_completed);
-        if (bestEst === null || est > bestEst) {
-          bestEst = est; bestRow = s; bestSource = s.reps_completed === 1 ? 'actual' : 'calculated';
+        if (s.reps_completed === 1) {
+          if (!actualRow || s.weight_lbs > actualRow.weight_lbs) actualRow = s;
+        } else {
+          const est = epley(s.weight_lbs, s.reps_completed);
+          if (calcVal === null || est > calcVal) { calcVal = est; calcRow = s; }
         }
       });
       const chartValues = sessions
         .filter(s => s.weight_lbs && s.reps_completed)
         .map(s => epley(s.weight_lbs, s.reps_completed));
 
-      html += bestRow ? `
-        <div class="best-card">
-          <div class="best-label">All-time best (est. 1RM)</div>
-          <div class="best-value">${Math.round(bestEst)} lb</div>
-          <div class="best-sub">${bestRow.reps_completed} reps @ ${bestRow.weight_lbs} lb on ${fmtDate(bestRow.logged_at)} (${bestSource})</div>
-        </div>
-      ` : '';
-      html += chartValues.length ? `<div class="chart-card">${buildLineChartSvg(chartValues)}</div>` : '';
+      if (actualRow) {
+        html += `
+          <div class="best-card">
+            <div class="best-label">Actual 1RM</div>
+            <div class="best-value">${actualRow.weight_lbs} lb</div>
+            <div class="best-sub">1 rep on ${fmtDate(actualRow.logged_at)}</div>
+          </div>`;
+      }
+      if (calcRow) {
+        html += `
+          <div class="best-card est">
+            <div class="best-label">Estimated 1RM (calculated)</div>
+            <div class="best-value">${Math.round(calcVal)} lb</div>
+            <div class="best-sub">from ${calcRow.reps_completed} reps @ ${calcRow.weight_lbs} lb on ${fmtDate(calcRow.logged_at)}</div>
+          </div>`;
+      }
+      if (!actualRow && !calcRow) {
+        html += `<div class="sub">No weighted sets with reps logged yet.</div>`;
+      }
+      html += chartValues.length > 1 ? `<div class="chart-card">${buildLineChartSvg(chartValues)}</div>` : '';
       html += sessionListHtml(sessions, (s) => {
-        const isPR = s === bestRow;
         const val = `${s.reps_completed ?? '?'} reps @ ${s.weight_lbs ?? '?'} lb`;
-        return { val, isPR };
+        if (s === actualRow) return { val, isPR: true, prLabel: '1RM PR' };
+        if (s === calcRow) return { val, isPR: true, prLabel: 'EST HIGH', est: true };
+        return { val, isPR: false };
       });
     }
 
     root.innerHTML = html;
+    wireTopBar(() => renderMovementPicker());
+  }
+
+  // ======================= PERSONAL RECORDS =======================
+  // One list of every lift's records. Actual 1RM (a true single you really did)
+  // is shown as the headline; an estimate is shown beneath, clearly labeled,
+  // and never takes the headline spot from a real lift.
+  async function renderPrBoard() {
+    root.innerHTML = `${topBarHtml(true)}<div class="page-title">Personal Records</div><div class="center-msg" style="margin-top:20px;">Loading…</div>`;
+    wireTopBar(() => renderMovementPicker());
+
+    const { data, error } = await sb
+      .from('strength_results').select('movement_id, reps_completed, weight_lbs, logged_at, movements(id, name)');
+    if (error) {
+      root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(error.message)}</div>`;
+      wireTopBar(() => renderMovementPicker());
+      return;
+    }
+
+    const byMovement = {};
+    (data || []).forEach(r => {
+      if (!r.movements || !r.reps_completed) return; // skips cardio rounds, which carry no reps
+      const id = r.movement_id;
+      if (!byMovement[id]) {
+        byMovement[id] = { name: r.movements.name, actual: null, actualDate: null, calc: null, bestReps: 0, bestRepsDate: null };
+      }
+      const m = byMovement[id];
+      if (r.weight_lbs) {
+        if (r.reps_completed === 1) {
+          if (m.actual === null || r.weight_lbs > m.actual) { m.actual = r.weight_lbs; m.actualDate = r.logged_at; }
+        } else {
+          const est = epley(r.weight_lbs, r.reps_completed);
+          if (m.calc === null || est > m.calc) m.calc = est;
+        }
+      }
+      if (r.reps_completed > m.bestReps) { m.bestReps = r.reps_completed; m.bestRepsDate = r.logged_at; }
+    });
+
+    const all = Object.values(byMovement).sort((a, b) => a.name.localeCompare(b.name));
+    const loaded = all.filter(m => !isBodyweightMovement(m.name) && (m.actual !== null || m.calc !== null));
+    const bodyweight = all.filter(m => isBodyweightMovement(m.name) && m.bestReps > 0);
+
+    const loadedRows = loaded.map(m => {
+      const main = m.actual !== null
+        ? `<div class="pr-main">${m.actual} lb</div><div class="pr-sub">actual 1RM · ${fmtDate(m.actualDate)}</div>`
+        : `<div class="pr-main none">no actual 1RM yet</div>`;
+      const est = m.calc !== null ? `<div class="pr-sub">est. ${Math.round(m.calc)} lb (calculated)</div>` : '';
+      return `<div class="pr-row"><div class="pr-name">${esc(m.name)}</div><div class="pr-vals">${main}${est}</div></div>`;
+    }).join('');
+
+    const bodyweightRows = bodyweight.map(m =>
+      `<div class="pr-row"><div class="pr-name">${esc(m.name)}</div>
+        <div class="pr-vals"><div class="pr-main">${m.bestReps} reps</div><div class="pr-sub">${fmtDate(m.bestRepsDate)}</div></div></div>`
+    ).join('');
+
+    root.innerHTML = `
+      ${topBarHtml(true)}
+      <div class="page-title">Personal Records</div>
+      <div class="sub">Actual = a lift you really did. Estimated = calculated from multi-rep sets.</div>
+      ${loadedRows ? `<div class="section-label">Lifts</div>${loadedRows}` : ''}
+      ${bodyweightRows ? `<div class="section-label">Bodyweight — best reps</div>${bodyweightRows}` : ''}
+      ${!loadedRows && !bodyweightRows ? `<div class="center-msg" style="margin-top:20px;">No records yet.</div>` : ''}
+    `;
     wireTopBar(() => renderMovementPicker());
   }
 
@@ -446,10 +555,11 @@
 
   function sessionListHtml(sessions, describe) {
     const rows = sessions.slice().reverse().map(s => {
-      const { val, isPR } = describe(s);
+      const { val, isPR, prLabel, est } = describe(s);
+      const tag = isPR ? `<span class="s-pr${est ? ' s-est' : ''}">${esc(prLabel || 'PR')}</span>` : '';
       return `<div class="session-row">
         <span class="s-date">${fmtDate(s.logged_at)}</span>
-        <span class="s-val">${val}${isPR ? '<span class="s-pr">PR</span>' : ''}${s.notes ? `<span class="s-notes">${esc(s.notes)}</span>` : ''}</span>
+        <span class="s-val">${val}${tag}${s.notes ? `<span class="s-notes">${esc(s.notes)}</span>` : ''}</span>
       </div>`;
     }).join('');
     return `<div>${rows}</div>`;

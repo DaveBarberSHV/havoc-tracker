@@ -61,6 +61,7 @@
     margin-bottom: 8px; font-size: 20px; font-weight: 600;
   }
   .pr-card .sub { display: block; font-size: 16px; font-weight: 500; opacity: 0.9; margin-top: 2px; }
+  .pr-card.est { background: var(--panel); border: 2px solid var(--accent); }
 
   .day-card {
     background: var(--panel); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px;
@@ -194,18 +195,37 @@
           .from('strength_results').select('reps_completed, weight_lbs, logged_at')
           .eq('movement_id', movId).not('weight_lbs', 'is', null).not('reps_completed', 'is', null);
         if (error) continue;
-        let priorBest = null, thisWeekBest = null, thisWeekBestRow = null;
+        // Two separate records: actual 1RM (true singles) and calculated (multi-rep estimates).
+        // They're judged independently so a real lift is never overshadowed by an estimate.
+        let priorActual = null, priorCalc = null;
+        let weekActualRow = null, weekCalcRow = null, weekCalcVal = null;
         for (const row of allRows) {
-          const est = epley(row.weight_lbs, row.reps_completed);
           const rowDate = row.logged_at.slice(0, 10);
-          if (rowDate >= weekDates[0] && rowDate <= weekDates[4]) {
-            if (thisWeekBest === null || est > thisWeekBest) { thisWeekBest = est; thisWeekBestRow = row; }
-          } else if (rowDate < weekDates[0]) {
-            if (priorBest === null || est > priorBest) priorBest = est;
+          const inWeek = rowDate >= weekDates[0] && rowDate <= weekDates[4];
+          const isPrior = rowDate < weekDates[0];
+          if (row.reps_completed === 1) {
+            if (inWeek) {
+              if (!weekActualRow || row.weight_lbs > weekActualRow.weight_lbs) weekActualRow = row;
+            } else if (isPrior) {
+              if (priorActual === null || row.weight_lbs > priorActual) priorActual = row.weight_lbs;
+            }
+          } else {
+            const est = epley(row.weight_lbs, row.reps_completed);
+            if (inWeek) {
+              if (weekCalcVal === null || est > weekCalcVal) { weekCalcVal = est; weekCalcRow = row; }
+            } else if (isPrior) {
+              if (priorCalc === null || est > priorCalc) priorCalc = est;
+            }
           }
         }
-        if (thisWeekBest !== null && (priorBest === null || thisWeekBest > priorBest)) {
-          prList.push({ name: movementNameById[movId] || 'Movement', row: thisWeekBestRow, est: thisWeekBest });
+        const name = movementNameById[movId] || 'Movement';
+        if (weekActualRow && (priorActual === null || weekActualRow.weight_lbs > priorActual)) {
+          prList.push({ kind: 'actual', first: priorActual === null, name, row: weekActualRow });
+        }
+        // A calculated high has to beat everything known — actual or calculated
+        const priorKnown = Math.max(priorCalc || 0, priorActual || 0);
+        if (weekCalcRow && (priorKnown === 0 || weekCalcVal > priorKnown)) {
+          prList.push({ kind: 'est', name, row: weekCalcRow, est: weekCalcVal });
         }
       }
 
@@ -244,9 +264,16 @@
 
       if (prList.length) {
         html += `<div class="pr-section">`;
+        // Real lifts first, then calculated highs
+        prList.sort((a, b) => (a.kind === 'actual' ? 0 : 1) - (b.kind === 'actual' ? 0 : 1));
         prList.forEach(pr => {
-          html += `<div class="pr-card">🏆 ${esc(pr.name)} PR
-            <span class="sub">${pr.row.reps_completed} reps @ ${pr.row.weight_lbs} lb · est. 1RM ${Math.round(pr.est)} lb</span></div>`;
+          if (pr.kind === 'actual') {
+            html += `<div class="pr-card">🏆 ${esc(pr.name)} — ${pr.first ? 'first recorded 1RM' : '1RM PR'}
+              <span class="sub">${pr.row.weight_lbs} lb · 1 rep (actual)</span></div>`;
+          } else {
+            html += `<div class="pr-card est">📈 ${esc(pr.name)} — est. 1RM high
+              <span class="sub">${Math.round(pr.est)} lb calculated from ${pr.row.reps_completed} reps @ ${pr.row.weight_lbs} lb</span></div>`;
+          }
         });
         html += `</div>`;
       }
@@ -279,6 +306,13 @@
           });
           let lines = '';
           Object.entries(byMovement).forEach(([name, rows]) => {
+            // Cardio rounds (bike/row/ski/run) carry a duration/calories, not reps or pounds
+            if (rows.some(r => r.duration_seconds != null || r.calories != null)) {
+              const totalCal = rows.reduce((sum, r) => sum + (r.calories || 0), 0);
+              const cardioText = `${rows.length} round${rows.length === 1 ? '' : 's'}${totalCal ? ` · ${totalCal} cal` : ''}`;
+              lines += `<div class="day-line"><span class="lbl">${esc(name)}</span><span class="val">${cardioText}</span></div>`;
+              return;
+            }
             const anyWeighted = rows.some(r => r.weight_lbs);
             const best = anyWeighted
               ? rows.reduce((a, b) => (b.weight_lbs || 0) > (a.weight_lbs || 0) ? b : a)

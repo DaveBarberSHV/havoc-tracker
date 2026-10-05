@@ -104,6 +104,9 @@
     display: inline-flex; align-items: center; gap: 6px; background: var(--accent); color: var(--chalk);
     font-size: 20px; font-weight: 700; padding: 5px 14px 6px; border-radius: 999px; margin-top: 10px;
   }
+  /* A calculated high is real information but not a lift you actually did,
+     so it's visually quieter than a true PR. */
+  .pr-badge.est { background: transparent; border: 2px solid var(--accent); }
 
   .log-btn {
     margin-top: 26px; width: 100%; padding: 20px 0; border-radius: 12px; border: none;
@@ -326,6 +329,43 @@
     return BODYWEIGHT_PATTERNS.some((p) => p.test(name));
   }
 
+  // Cardio / monostructural work (bike, row, ski, run). Neither pounds nor reps
+  // describes these, so they get their own entry mode: a duration plus optional
+  // calories. Rowing/running are matched strictly so "Bent Over Row" or
+  // "Ring Row" are never mistaken for the rower.
+  const CARDIO_PATTERNS = [
+    /\bbike(\s*erg)?\b/i,
+    /\bski(\s*erg)?\b/i,
+    /^\s*(calorie\s+|cal\s+|meter\s+)?(row|rower|rowing|run|running|jog|jogging|swim|swimming)(\s+erg)?\s*$/i,
+  ];
+  function isCardioMovement(name) {
+    return CARDIO_PATTERNS.some((p) => p.test(name));
+  }
+  // "2 minutes" -> 120, "1:30" -> 90, "90 seconds" -> 90
+  function parseDurationSeconds(text) {
+    if (!text) return null;
+    const t = String(text).toLowerCase();
+    let m = t.match(/(\d+):(\d{2})/);
+    if (m) return parseInt(m[1], 10) * 60 + parseInt(m[2], 10);
+    m = t.match(/(\d+(?:\.\d+)?)\s*(?:min|minute)/);
+    if (m) return Math.round(parseFloat(m[1]) * 60);
+    m = t.match(/(\d+)\s*(?:sec|second)/);
+    if (m) return parseInt(m[1], 10);
+    return null;
+  }
+  function fmtDuration(totalSeconds) {
+    if (totalSeconds == null) return null;
+    const m = Math.floor(totalSeconds / 60), s = totalSeconds % 60;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  }
+  // One readable line for a cardio round, e.g. "2:00 · 28 cal"
+  function fmtCardioSet(row) {
+    const parts = [];
+    if (row.duration_seconds != null) parts.push(fmtDuration(row.duration_seconds));
+    if (row.calories != null) parts.push(`${row.calories} cal`);
+    return parts.length ? parts.join(' · ') : 'Completed';
+  }
+
   // ======================= AUTH =======================
   async function init() {
     await recoverSessionFromUrl();
@@ -434,10 +474,12 @@
     const { data, error } = await sb
       .from('strength_results').select('reps_completed, weight_lbs, logged_at')
       .eq('movement_id', movementId).order('logged_at', { ascending: false }).limit(5);
-    if (error) { state.error = error.message; return { recent: [], best1RM: null, bestSource: null, bestReps: null }; }
+    if (error) { state.error = error.message; return { recent: [], bestActual: null, bestCalc: null, bestReps: null }; }
     const recent = data || [];
-    let best1RM = null, bestSource = null, bestReps = null;
-    // Look across full history for the 1RM/best-reps record, not just the last 5 shown
+    // Two separate records, deliberately not blended:
+    //   bestActual = heaviest TRUE single (reps_completed === 1) — a lift you actually did
+    //   bestCalc   = highest Epley estimate from multi-rep sets — an extrapolation
+    let bestActual = null, bestCalc = null, bestReps = null;
     const { data: allRows } = await sb
       .from('strength_results').select('reps_completed, weight_lbs')
       .eq('movement_id', movementId).not('reps_completed', 'is', null);
@@ -446,13 +488,14 @@
         bestReps = row.reps_completed;
       }
       if (!row.weight_lbs || !row.reps_completed) continue;
-      const est = epley(row.weight_lbs, row.reps_completed);
-      if (best1RM === null || est > best1RM) {
-        best1RM = est;
-        bestSource = row.reps_completed === 1 ? 'actual' : 'calculated';
+      if (row.reps_completed === 1) {
+        if (bestActual === null || row.weight_lbs > bestActual) bestActual = row.weight_lbs;
+      } else {
+        const est = epley(row.weight_lbs, row.reps_completed);
+        if (bestCalc === null || est > bestCalc) bestCalc = est;
       }
     }
-    return { recent, best1RM, bestSource, bestReps };
+    return { recent, bestActual, bestCalc, bestReps };
   }
 
   // ======================= WRITES =======================
@@ -463,6 +506,21 @@
       set_number: setNumber,
       reps_completed: reps,
       weight_lbs: weight,
+      notes: notes || null,
+    }, { onConflict: 'user_id,segment_id,movement_id,set_number' });
+    if (error) throw error;
+  }
+
+  // A cardio round: no pounds, no reps — just how long and (optionally) how many calories.
+  async function logCardioRound(movementId, setNumber, durationSeconds, calories, notes) {
+    const { error } = await sb.from('strength_results').upsert({
+      segment_id: state.tasks[state.taskIndex].segment.id,
+      movement_id: movementId,
+      set_number: setNumber,
+      reps_completed: null,
+      weight_lbs: null,
+      duration_seconds: durationSeconds,
+      calories: calories,
       notes: notes || null,
     }, { onConflict: 'user_id,segment_id,movement_id,set_number' });
     if (error) throw error;
@@ -748,16 +806,22 @@
 
       movementBlocks.forEach(block => {
         const isBW = isBodyweightMovement(block.movement.name);
+        const isCardio = isCardioMovement(block.movement.name);
         const prescribedSets = block.segMovement.prescribed_sets || 1;
         html += `<div class="review-block"><div class="review-title">${esc(block.movement.name)}</div>`;
         block.sets.forEach(s => {
           const key = `${block.movement.id}_${s.set_number}`;
           if (editingKey === key) {
+            const editFields = isCardio
+              ? `<div class="score-field"><label>Minutes</label><input type="number" id="editMin" value="${Math.floor((s.duration_seconds || 0) / 60)}" min="0"></div>
+                 <div class="score-field"><label>Seconds</label><input type="number" id="editSec" value="${(s.duration_seconds || 0) % 60}" min="0" max="59"></div>
+                 <div class="score-field"><label>Cal</label><input type="number" id="editCal" value="${s.calories ?? ''}" min="0" placeholder="—"></div>`
+              : `<div class="score-field"><label>Reps</label><input type="number" id="editReps" value="${s.reps_completed ?? ''}" min="0"></div>
+                 ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="editWeight" value="${s.weight_lbs ?? ''}" min="0"></div>` : ''}`;
             html += `
               <div class="review-edit-form">
                 <div class="score-row">
-                  <div class="score-field"><label>Reps</label><input type="number" id="editReps" value="${s.reps_completed ?? ''}" min="0"></div>
-                  ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="editWeight" value="${s.weight_lbs ?? ''}" min="0"></div>` : ''}
+                  ${editFields}
                 </div>
                 <div class="notes-field"><label>Notes</label><input type="text" id="editNotes" value="${esc(s.notes || '')}"></div>
                 <div style="display:flex;gap:8px;margin-top:10px;">
@@ -766,9 +830,11 @@
                 </div>
               </div>`;
           } else {
-            const valText = isBW
-              ? `${s.reps_completed ?? '?'} reps${s.weight_lbs ? ` @ ${s.weight_lbs} lb` : ''}`
-              : `${s.reps_completed ?? '?'} reps @ ${s.weight_lbs ?? '?'} lb`;
+            const valText = isCardio
+              ? fmtCardioSet(s)
+              : isBW
+                ? `${s.reps_completed ?? '?'} reps${s.weight_lbs ? ` @ ${s.weight_lbs} lb` : ''}`
+                : `${s.reps_completed ?? '?'} reps @ ${s.weight_lbs ?? '?'} lb`;
             html += `
               <div class="review-row">
                 <span class="review-set-label">Set ${s.set_number}</span>
@@ -780,11 +846,19 @@
         if (block.sets.length < prescribedSets) {
           const nextSet = block.sets.length + 1;
           if (addingSetFor === block.movement.id) {
+            const addSeconds = isCardio
+              ? (parseDurationSeconds(block.segMovement.prescribed_reps) || parseDurationSeconds(block.segMovement.prescribed_scheme) || 0)
+              : 0;
+            const addFields = isCardio
+              ? `<div class="score-field"><label>Minutes</label><input type="number" id="addMin" value="${Math.floor(addSeconds / 60)}" min="0"></div>
+                 <div class="score-field"><label>Seconds</label><input type="number" id="addSec" value="${addSeconds % 60}" min="0" max="59"></div>
+                 <div class="score-field"><label>Cal</label><input type="number" id="addCal" value="" min="0" placeholder="—"></div>`
+              : `<div class="score-field"><label>Reps</label><input type="number" id="addReps" value="${block.segMovement.prescribed_reps ? parseInt(block.segMovement.prescribed_reps, 10) || '' : ''}" min="0"></div>
+                 ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="addWeight" value="0" min="0"></div>` : ''}`;
             html += `
               <div class="review-edit-form">
                 <div class="score-row">
-                  <div class="score-field"><label>Reps</label><input type="number" id="addReps" value="${block.segMovement.prescribed_reps ? parseInt(block.segMovement.prescribed_reps, 10) || '' : ''}" min="0"></div>
-                  ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="addWeight" value="0" min="0"></div>` : ''}
+                  ${addFields}
                 </div>
                 <div style="display:flex;gap:8px;margin-top:10px;">
                   <button class="log-btn" id="saveAddBtn" style="margin-top:0;flex:1;">Save Set ${nextSet}</button>
@@ -882,6 +956,36 @@
         const [movementId, setNumberStr] = editingKey.split('_');
         const block = movementBlocks.find(b => String(b.movement.id) === movementId);
         const setRow = block.sets.find(s => String(s.set_number) === setNumberStr);
+
+        // Cardio round: duration + calories instead of reps + weight
+        if (document.getElementById('editMin')) {
+          const mins = parseInt(document.getElementById('editMin').value || '0', 10) || 0;
+          const secs = parseInt(document.getElementById('editSec').value || '0', 10) || 0;
+          const total = mins * 60 + secs;
+          const calRaw = document.getElementById('editCal').value.trim();
+          const cal = calRaw === '' ? null : parseInt(calRaw, 10);
+          const noteVal = document.getElementById('editNotes').value.trim() || null;
+          const cardioPayload = {
+            duration_seconds: total > 0 ? total : null,
+            calories: (cal == null || isNaN(cal)) ? null : cal,
+            reps_completed: null,   // clears any stray pounds/reps from before this was a cardio entry
+            weight_lbs: null,
+            notes: noteVal,
+          };
+          try {
+            const { error } = await sb.from('strength_results').update(cardioPayload).eq('id', setRow.id);
+            if (error) throw error;
+            Object.assign(setRow, cardioPayload);
+            state.error = null;
+            editingKey = null;
+            draw();
+          } catch (e) {
+            state.error = e.message;
+            draw();
+          }
+          return;
+        }
+
         const repsEl = document.getElementById('editReps');
         const weightEl = document.getElementById('editWeight');
         const notesEl = document.getElementById('editNotes');
@@ -911,6 +1015,34 @@
         saveAddBtn.disabled = true;
         const block = movementBlocks.find(b => b.movement.id === addingSetFor);
         const nextSet = block.sets.length + 1;
+
+        // Cardio round: duration + calories instead of reps + weight
+        if (document.getElementById('addMin')) {
+          const mins = parseInt(document.getElementById('addMin').value || '0', 10) || 0;
+          const secs = parseInt(document.getElementById('addSec').value || '0', 10) || 0;
+          const total = mins * 60 + secs;
+          const calRaw = document.getElementById('addCal').value.trim();
+          const cal = calRaw === '' ? null : parseInt(calRaw, 10);
+          try {
+            const { data, error } = await sb.from('strength_results').insert({
+              segment_id: block.segment.id,
+              movement_id: block.movement.id,
+              set_number: nextSet,
+              duration_seconds: total > 0 ? total : null,
+              calories: (cal == null || isNaN(cal)) ? null : cal,
+            }).select().single();
+            if (error) throw error;
+            block.sets.push(data);
+            state.error = null;
+            addingSetFor = null;
+            draw();
+          } catch (e) {
+            state.error = e.message;
+            draw();
+          }
+          return;
+        }
+
         const repsEl = document.getElementById('addReps');
         const weightEl = document.getElementById('addWeight');
         const reps = parseInt(repsEl.value, 10);
@@ -985,14 +1117,107 @@
     };
   }
 
+  // ======================= RENDER: CARDIO ROUND =======================
+  // For bike/row/ski/run intervals. Time is pre-filled from the workout as written
+  // ("2 minutes"), so if you did it as prescribed it's one tap; calories are optional.
+  async function renderCardio(task) {
+    root.innerHTML = `<div class="center-msg">Loading round…</div>`;
+    const prescribedSets = task.segMovement.prescribed_sets || 1;
+    const prescribedSeconds = parseDurationSeconds(task.segMovement.prescribed_reps)
+      || parseDurationSeconds(task.segMovement.prescribed_scheme);
+
+    const { data: recentRows } = await sb
+      .from('strength_results').select('duration_seconds, calories, logged_at')
+      .eq('movement_id', task.movement.id)
+      .or('duration_seconds.not.is.null,calories.not.is.null')
+      .order('logged_at', { ascending: false }).limit(5);
+    const recent = recentRows || [];
+    const defaultSeconds = prescribedSeconds != null
+      ? prescribedSeconds
+      : (recent.length && recent[0].duration_seconds != null ? recent[0].duration_seconds : 0);
+
+    function draw() {
+      const tabsHtml = Array.from({ length: prescribedSets }, (_, i) => {
+        const n = i + 1;
+        const cls = n < state.setNumber ? 'done' : (n === state.setNumber ? 'active' : '');
+        return `<div class="set-tab ${cls}">${n}</div>`;
+      }).join('');
+      const lastLine = recent.length
+        ? `Last round ${fmtDate(recent[0].logged_at)}: ${fmtCardioSet(recent[0])}`
+        : `No rounds logged yet`;
+      const priorRows = recent.map(r =>
+        `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${esc(fmtCardioSet(r))}</span></div>`
+      ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
+
+      root.innerHTML = `
+        ${topBarHtml(false)}
+        <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
+        <div class="topline">
+          <span>${esc(state.workout.workout_date)} &middot; Cardio</span>
+          <span>${state.setNumber} / ${prescribedSets} rounds</span>
+        </div>
+        <div class="movement-name">${esc(task.movement.name)}</div>
+        <div class="scheme">${esc(task.segMovement.prescribed_reps || '')}${task.segMovement.prescribed_scheme ? ' &middot; ' + esc(task.segMovement.prescribed_scheme) : ''}</div>
+        <div class="set-tabs">${tabsHtml}</div>
+        <div class="entry-card">
+          <div class="score-row">
+            <div class="score-field"><label>Minutes</label><input type="number" id="cardioMin" value="${Math.floor(defaultSeconds / 60)}" min="0"></div>
+            <div class="score-field"><label>Seconds</label><input type="number" id="cardioSec" value="${defaultSeconds % 60}" min="0" max="59"></div>
+            <div class="score-field"><label>Cal (optional)</label><input type="number" id="cardioCal" value="" min="0" placeholder="—"></div>
+          </div>
+          <div class="context-line">${lastLine}<span class="line2">Time is pre-filled from the workout — just tap Log if you did it as written</span></div>
+        </div>
+        ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
+        <div class="notes-field">
+          <label for="notesInput">Notes (optional)</label>
+          <input type="text" id="notesInput" placeholder="e.g. pace, how it felt">
+        </div>
+        <button class="log-btn" id="logCardioBtn">Log round &amp; next →</button>
+        <div class="prior-sessions">
+          <div class="prior-title">${esc(task.movement.name)} — last ${recent.length} round(s)</div>
+          ${priorRows}
+        </div>
+      `;
+      wireTopBar();
+
+      document.getElementById('logCardioBtn').onclick = async () => {
+        document.getElementById('logCardioBtn').disabled = true;
+        const min = parseInt(document.getElementById('cardioMin').value || '0', 10) || 0;
+        const sec = parseInt(document.getElementById('cardioSec').value || '0', 10) || 0;
+        const total = min * 60 + sec;
+        const calRaw = document.getElementById('cardioCal').value.trim();
+        const cal = calRaw === '' ? null : parseInt(calRaw, 10);
+        const noteVal = document.getElementById('notesInput').value.trim() || null;
+        try {
+          await logCardioRound(task.movement.id, state.setNumber, total > 0 ? total : null, (cal == null || isNaN(cal)) ? null : cal, noteVal);
+          state.error = null;
+          if (state.setNumber < prescribedSets) {
+            state.setNumber += 1;
+            renderCardio(task);
+          } else {
+            state.taskIndex += 1;
+            state.setNumber = 1;
+            render();
+          }
+        } catch (e) {
+          state.error = e.message;
+          draw();
+        }
+      };
+    }
+    draw();
+  }
+
   // ======================= RENDER: STRENGTH TASK =======================
   async function renderStrength(task) {
+    if (isCardioMovement(task.movement.name)) { return renderCardio(task); }
     root.innerHTML = `<div class="center-msg">Loading movement…</div>`;
     const prescribedSets = task.segMovement.prescribed_sets || 1;
     const prescribedReps = parseLeadingInt(task.segMovement.prescribed_reps) || null;
     const isBodyweight = isBodyweightMovement(task.movement.name);
     const STEP = isBodyweight ? 1 : 5;
-    const { recent, best1RM, bestSource, bestReps } = await loadMovementHistory(task.movement.id);
+    const { recent, bestActual, bestCalc, bestReps } = await loadMovementHistory(task.movement.id);
+    const isSingle = prescribedReps === 1; // a true 1-rep attempt, i.e. a 1RM test
 
     let weight = recent.length
       ? Math.round((isBodyweight ? recent[0].reps_completed : recent[0].weight_lbs) || 0)
@@ -1007,7 +1232,7 @@
         return `<div class="set-tab ${cls}">${n}</div>`;
       }).join('');
 
-      let lastLine, contextLine2, isPR, prBadgeText, priorRows, unitLabel;
+      let lastLine, contextLine2, isPR, prBadgeText, priorRows, unitLabel, prIsEst = false;
 
       if (isBodyweight) {
         unitLabel = 'reps &middot; tap number to type';
@@ -1025,10 +1250,27 @@
         lastLine = recent.length
           ? `Last session ${fmtDate(recent[0].logged_at)}, ${recent[0].reps_completed ?? '?'} Reps @ ${recent[0].weight_lbs ?? '?'} lb`
           : `No sessions logged yet`;
-        contextLine2 = best1RM ? `1RM = ${Math.round(best1RM)} lb (${bestSource})` : `1RM = Unknown`;
-        const estToday = prescribedReps ? epley(weight, prescribedReps) : weight;
-        isPR = best1RM !== null && estToday > best1RM;
-        prBadgeText = '🏆 New est. 1RM PR';
+        // Show BOTH records so a real lift is never overshadowed by an estimate
+        if (bestActual === null && bestCalc === null) {
+          contextLine2 = `1RM = Unknown`;
+        } else {
+          const actualText = bestActual !== null ? `1RM ${Math.round(bestActual)} lb (actual)` : `1RM: none logged`;
+          const calcText = bestCalc !== null ? ` · Est. ${Math.round(bestCalc)} lb` : '';
+          contextLine2 = actualText + calcText;
+        }
+        prIsEst = false;
+        if (isSingle) {
+          // A true single is judged against actual singles ONLY — never against an estimate
+          isPR = weight > 0 && (bestActual === null || weight > bestActual);
+          prBadgeText = bestActual === null ? '🏆 First 1RM recorded' : '🏆 New 1RM PR';
+        } else {
+          // A multi-rep set is an estimate; it must beat everything known (actual or calculated)
+          const estToday = prescribedReps ? epley(weight, prescribedReps) : weight;
+          const known = Math.max(bestCalc || 0, bestActual || 0);
+          isPR = known > 0 && estToday > known;
+          prBadgeText = '📈 New est. 1RM high';
+          prIsEst = true;
+        }
         priorRows = recent.map(r =>
           `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps @ ${r.weight_lbs ?? '?'} lb</span></div>`
         ).join('') || `<div class="prior-row"><span class="date">—</span><span class="val">No history yet</span></div>`;
@@ -1054,7 +1296,7 @@
             <button class="stepper" id="incBtn">+</button>
           </div>
           <div class="context-line">${lastLine}<span class="line2">${contextLine2}</span></div>
-          <div class="pr-badge" style="display:${isPR ? 'inline-flex' : 'none'}">${prBadgeText}</div>
+          <div class="pr-badge${prIsEst ? ' est' : ''}" style="display:${isPR ? 'inline-flex' : 'none'}">${prBadgeText}</div>
           ${isBodyweight ? `
             <button class="nav-link-btn" id="toggleExtraWeightBtn" type="button" style="margin-top:14px;">
               ${showExtraWeight ? '− Remove added weight' : '+ Add weight (e.g. a ball or vest)'}
