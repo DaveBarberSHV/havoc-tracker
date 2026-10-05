@@ -123,7 +123,7 @@ def main():
     ap.add_argument("--stop-date", default=None, help="Don't load anything older than this YYYY-MM-DD")
     ap.add_argument("--max-posts", type=int, default=60, help="Safety cap on how many posts to crawl")
     ap.add_argument("--dry-run", action="store_true", help="Crawl and parse, but don't write to Supabase")
-    ap.add_argument("--force", action="store_true", help="Re-parse and overwrite dates that are already in the database (default: skip them, but keep crawling backward)")
+    ap.add_argument("--force", action="store_true", help="Re-parse and overwrite dates that are already in the database (default: skip them, but keep crawling backward). WARNING: this erases every user's logged results for those dates.")
     ap.add_argument("--delay", type=float, default=1.0, help="Seconds to wait between requests (be polite to the site)")
     args = ap.parse_args()
 
@@ -161,7 +161,7 @@ def main():
             print(f"    [dry-run] Would parse and load this post.")
         else:
             parsed = parse_with_claude(wod["raw_text"])
-            workout_id = load_into_supabase(sb, wod, parsed)
+            workout_id = load_into_supabase(sb, wod, parsed, force=args.force)
             print(f"    Loaded workout_id={workout_id} with {len(parsed['segments'])} segments.")
             loaded += 1
 

@@ -207,6 +207,15 @@
   .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 12px; }
   .day-pick-list { display: flex; flex-direction: column; gap: 8px; }
 
+  .wod-details { background: var(--panel); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
+  .wod-desc { font-size: 21px; line-height: 1.45; white-space: pre-wrap; }
+  .wod-dim { color: var(--chalk-dim); }
+  .wod-full { margin-top: 10px; }
+  .wod-full summary { color: var(--chalk-dim); font-size: 18px; padding: 6px 0; cursor: pointer; }
+  .wod-full .wod-desc { font-size: 18px; color: var(--chalk-dim); margin-top: 6px; }
+  .wod-full:first-child { margin-top: 0; }
+  .review-block .wod-details { background: var(--panel-2); margin: 4px 0 12px; }
+
   .review-block { background: var(--panel); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 12px; }
   .review-title { font-size: 22px; font-weight: 700; margin-bottom: 8px; }
   .review-row {
@@ -366,6 +375,38 @@
     return parts.length ? parts.join(' · ') : 'Completed';
   }
 
+  // ---- WOD details -----------------------------------------------------
+  // The site's page text ends with a share widget and a date ("Like / Loading… / September 23, 2026").
+  function cleanPostText(raw) {
+    if (!raw) return '';
+    return String(raw)
+      .replace(/\u00a0/g, ' ')
+      .replace(/\n+\s*Like\s*\n+\s*Loading[\s\S]*$/i, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+  // Shows the WOD as written. Preference: the stored description (new days), else the
+  // parsed movement list (older days). The full post is always one tap away, which is
+  // what gives past days complete details without re-processing anything.
+  function wodDetailsHtml(seg, movements, rawPostText) {
+    let body = '';
+    if (seg.description) {
+      body = `<div class="wod-desc">${esc(seg.description)}</div>`;
+    } else if (movements && movements.length) {
+      body = `<div class="wod-desc">${movements.map(m => {
+        const reps = m.prescribed_reps ? `${esc(m.prescribed_reps)} ` : '';
+        const scheme = m.prescribed_scheme ? ` <span class="wod-dim">(${esc(m.prescribed_scheme)})</span>` : '';
+        return `${reps}${esc(m.movements ? m.movements.name : '')}${scheme}`;
+      }).join('<br>')}</div>`;
+    }
+    const full = cleanPostText(rawPostText);
+    const fullBlock = full
+      ? `<details class="wod-full"><summary>Full workout as posted</summary><div class="wod-desc">${esc(full)}</div></details>`
+      : '';
+    if (!body && !fullBlock) return '';
+    return `<div class="wod-details">${body}${fullBlock}</div>`;
+  }
+
   // ======================= AUTH =======================
   async function init() {
     await recoverSessionFromUrl();
@@ -426,7 +467,10 @@
           tasks.push({ type: 'strength', segment: seg, segMovement: m, movement: m.movements });
         }
       } else if (seg.segment_type === 'wod') {
-        tasks.push({ type: 'wod', segment: seg });
+        const { data: wodMovs } = await sb
+          .from('segment_movements').select('*, movements(id, name)')
+          .eq('segment_id', seg.id).order('movement_order');
+        tasks.push({ type: 'wod', segment: seg, movements: wodMovs || [] });
       }
     }
     state.tasks = tasks;
@@ -473,7 +517,9 @@
   async function loadMovementHistory(movementId) {
     const { data, error } = await sb
       .from('strength_results').select('reps_completed, weight_lbs, logged_at')
-      .eq('movement_id', movementId).order('logged_at', { ascending: false }).limit(5);
+      .eq('movement_id', movementId)
+      .not('segment_id', 'is', null) // manually entered PRs have no workout; keep them out of "last session" and the pre-filled weight
+      .order('logged_at', { ascending: false }).limit(5);
     if (error) { state.error = error.message; return { recent: [], bestActual: null, bestCalc: null, bestReps: null }; }
     const recent = data || [];
     // Two separate records, deliberately not blended:
@@ -643,7 +689,7 @@
       root.innerHTML = `
         ${topBarHtml(true)}
         <div class="page-title" style="font-size:32px;">Log a Custom Workout</div>
-        <div class="scheme" style="margin-bottom:16px;">For days like Saturday Hyrox that aren't posted by the gym</div>
+        <div class="scheme" style="margin-bottom:16px;">For workouts not posted by the gym</div>
 
         <label for="customDate" style="display:block;color:var(--chalk-dim);font-size:17px;margin-bottom:6px;">Date</label>
         <input type="date" id="customDate" value="${selectedDate}">
@@ -726,7 +772,6 @@
     root.innerHTML = `
       ${topBarHtml(true)}
       <div class="page-title" style="font-size:32px;">Pick a day</div>
-      <div class="scheme" style="margin-bottom:16px;">Choose a day to log or review</div>
       <div class="day-pick-list">${rows}</div>
     `;
     wireTopBar(() => render());
@@ -790,7 +835,10 @@
     const wodBlocks = [];
     for (const seg of wodSegs) {
       const { data: results } = await sb.from('wod_results').select('*').eq('segment_id', seg.id);
-      wodBlocks.push({ segment: seg, result: (results && results[0]) || null });
+      const { data: wodMovs } = await sb
+        .from('segment_movements').select('*, movements(id, name)')
+        .eq('segment_id', seg.id).order('movement_order');
+      wodBlocks.push({ segment: seg, result: (results && results[0]) || null, movements: wodMovs || [] });
     }
 
     let editingKey = null;   // e.g. "movementId_3" for a set, or "wod_<segmentId>"
@@ -874,7 +922,10 @@
 
       wodBlocks.forEach(wb => {
         const key = `wod_${wb.segment.id}`;
-        html += `<div class="review-block"><div class="review-title">${esc(wb.segment.title || 'WOD')}</div>`;
+        html += `<div class="review-block"><div class="review-title">${esc(wb.segment.wod_name || wb.segment.title || 'WOD')}</div>`;
+        if (wb.segment.source !== 'custom') {
+          html += wodDetailsHtml(wb.segment, wb.movements, workout.raw_text);
+        }
         if (!wb.result) {
           html += `<button class="nav-link-btn" data-log-wod="${wb.segment.id}" type="button">+ Log this WOD</button>`;
         } else if (editingKey === key) {
@@ -1462,8 +1513,9 @@
       ${topBarHtml(false)}
       <div class="progress">Step ${state.taskIndex + 1} of ${state.tasks.length}</div>
       <div class="topline"><span>${esc(state.workout.workout_date)} &middot; WOD</span></div>
-      <div class="movement-name">${esc(seg.title || 'WOD')}</div>
-      <div class="scheme">${esc(seg.structure_type || '')}</div>
+      <div class="movement-name">${esc(seg.wod_name || seg.title || 'WOD')}</div>
+      <div class="scheme">${seg.wod_name && seg.title ? esc(seg.title) : ''}</div>
+      ${wodDetailsHtml(seg, task.movements, state.workout && state.workout.raw_text)}
       <div class="entry-card">
         ${fieldsHtml()}
         <div class="toggle-row">

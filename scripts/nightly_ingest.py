@@ -51,6 +51,8 @@ Return ONLY valid JSON (no markdown fences, no preamble), matching this shape ex
           "prescribed_scheme": "free text description of the scheme for this movement"
         }
       ],
+      "wod_name": "ONLY if the post explicitly names a benchmark workout (e.g. Fran, Cindy, Murph, Helen, Grace, Diane) give just that name; otherwise null",
+      "description": "the segment's workout exactly as a coach would write it on a whiteboard: the format/time cap, every movement with its reps, loads, and rep scheme (e.g. '10 Minute AMRAP: 5 Pull-ups, 10 Push-ups, 15 Air Squats'). Use line breaks between parts. null for the warmup.",
       "notes": "anything relevant not captured above, or null"
     }
   ]
@@ -68,6 +70,8 @@ Rules:
 - prescribed_sets should be an integer when explicit (e.g. "Every 1:30 for 10 Sets" -> 10).
 - Keep movement names in consistent Title Case, singular where natural (e.g. "Pull-up").
 - Do not invent information not present in the text.
+- "description" must only restate what the post says. Never add movements, loads, or times that are not in the text. Keep the post's own wording for scores/formats (e.g. "For Time", "AMRAP 16").
+- "wod_name" is for named benchmark workouts only. A descriptive title like "AMRAP 16" or "50 Cal Bike" is NOT a name — use null.
 
 Here is the workout text to parse:
 
@@ -164,7 +168,27 @@ def parse_with_claude(raw_text: str) -> dict:
     return json.loads(text)
 
 
-def load_into_supabase(sb, wod: dict, parsed: dict):
+def workout_already_ingested(sb, workout_date: str) -> bool:
+    """True if this date already has a workout with its Havoc segments loaded."""
+    existing = sb.table("workouts").select("id").eq("workout_date", workout_date).execute()
+    if not existing.data:
+        return False
+    segs = (
+        sb.table("segments").select("id")
+        .eq("workout_id", existing.data[0]["id"]).eq("source", "havoc").limit(1).execute()
+    )
+    return bool(segs.data)
+
+
+def load_into_supabase(sb, wod: dict, parsed: dict, force: bool = False):
+    # SAFETY: strength_results and wod_results are set to delete automatically along with
+    # their segment. Deleting and rebuilding a day's segments therefore ERASES every
+    # user's logged results for that day. So a day that is already loaded is never
+    # rebuilt unless a human explicitly passes force=True.
+    if not force and workout_already_ingested(sb, wod["workout_date"]):
+        existing = sb.table("workouts").select("id").eq("workout_date", wod["workout_date"]).execute()
+        return existing.data[0]["id"]
+
     # Upsert the workout row
     existing = sb.table("workouts").select("id").eq("workout_date", wod["workout_date"]).execute()
     payload = {
@@ -178,7 +202,8 @@ def load_into_supabase(sb, wod: dict, parsed: dict):
     if existing.data:
         workout_id = existing.data[0]["id"]
         sb.table("workouts").update(payload).eq("id", workout_id).execute()
-        # clear old segments before reloading (handles re-parse / re-run same night)
+        # Reached only when the day has no segments yet, or force=True was requested.
+        # (With force=True this WILL erase logged results for that day — by design.)
         sb.table("segments").delete().eq("workout_id", workout_id).eq("source", "havoc").execute()
     else:
         result = sb.table("workouts").insert(payload).execute()
@@ -195,6 +220,8 @@ def load_into_supabase(sb, wod: dict, parsed: dict):
             "score_type": seg["score_type"],
             "source": "havoc",
             "notes": seg.get("notes"),
+            "description": seg.get("description"),
+            "wod_name": seg.get("wod_name"),
         }
         seg_result = sb.table("segments").insert(seg_row).execute()
         segment_id = seg_result.data[0]["id"]
@@ -221,7 +248,12 @@ def load_into_supabase(sb, wod: dict, parsed: dict):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.parse_args()
+    parser.add_argument(
+        "--force", action="store_true",
+        help="Rebuild a day that is already loaded. WARNING: this erases every user's "
+             "logged results for that day.",
+    )
+    args = parser.parse_args()
 
     for var in ("ANTHROPIC_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"):
         if not os.environ.get(var):
@@ -233,8 +265,12 @@ def main():
     wod = extract_latest_post(page_html)
     print(f"Latest post found: {wod['workout_date']} — {wod['source_title']}")
 
+    if not args.force and workout_already_ingested(sb, wod["workout_date"]):
+        print("Already loaded — leaving it untouched (no re-parse, no changes).")
+        return
+
     parsed = parse_with_claude(wod["raw_text"])
-    workout_id = load_into_supabase(sb, wod, parsed)
+    workout_id = load_into_supabase(sb, wod, parsed, force=args.force)
     print(f"Loaded workout_id={workout_id} with {len(parsed['segments'])} segments.")
 
 

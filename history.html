@@ -69,6 +69,21 @@
   .movement-row:active { background: var(--panel-2); }
   .movement-row .mv-name { font-size: 21px; font-weight: 600; }
   .movement-row .mv-count { color: var(--chalk-dim); font-size: 16px; }
+  .form-label { display: block; color: var(--chalk-dim); font-size: 18px; margin-bottom: 6px; }
+  .form-input {
+    width: 100%; padding: 14px 16px; border-radius: 10px; border: 2px solid var(--panel-2);
+    background: var(--panel); color: var(--chalk); font-size: 22px; font-family: 'Barlow Condensed', sans-serif;
+  }
+  .form-input:focus { outline: none; border-color: var(--accent); }
+  .score-row { display: flex; gap: 12px; width: 100%; }
+  .score-field { flex: 1; }
+  .score-field label { display: block; color: var(--chalk-dim); font-size: 18px; margin-bottom: 6px; }
+  .score-field input {
+    width: 100%; padding: 14px; border-radius: 10px; border: 2px solid var(--panel-2); background: var(--panel);
+    color: var(--chalk); font-size: 28px; font-family: 'JetBrains Mono', monospace; text-align: center;
+  }
+  .score-field input:focus { outline: none; border-color: var(--accent); }
+  .flash-ok { background: #2c4a2c; color: var(--chalk); padding: 12px 16px; border-radius: 10px; font-size: 19px; margin-bottom: 14px; }
   .pr-board-btn { background: var(--accent); margin-bottom: 14px; }
   .pr-board-btn:active { background: var(--accent-dim); }
   .pr-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
@@ -224,6 +239,46 @@
   }
 
   // ======================= MOVEMENT PICKER =======================
+  // ======================= PR ENTRY HELPERS =======================
+  // The lifts offered when entering a past personal record.
+  const PR_LIFTS = [
+    'Back Squat', 'Bench Press', 'Clean', 'Clean and Jerk', 'Front Squat', 'Overhead Squat',
+    'Power Clean', 'Power Clean and Jerk', 'Power Snatch', 'Push Press', 'Snatch',
+    'Snatch Balance', 'Strict Press', 'Unbroken Wall Balls',
+  ];
+  // Workout posts sometimes use a longer name for the same lift ("Full Snatch"). When a
+  // record is entered for "Snatch", it should land on the same movement the workouts use,
+  // so the entry screen and your records agree. Keys and values are normalized (see normName).
+  const PR_ALIASES = {
+    'snatch': ['full snatch', 'squat snatch'],
+    'clean': ['full clean', 'squat clean'],
+    'clean and jerk': ['full clean and jerk', 'squat clean and jerk'],
+    'bench press': ['barbell bench press'],
+    'strict press': ['shoulder press', 'strict shoulder press'],
+  };
+  function normName(n) {
+    return String(n).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  }
+  // Movements scored by most reps rather than heaviest 1RM. A 1RM estimate from a
+  // 100-rep wall-ball set would be meaningless, so these are shown as "best reps".
+  function isRepMaxMovement(name) {
+    return isBodyweightMovement(name) || /wall.?ball/i.test(name);
+  }
+  async function resolveMovementId(displayName) {
+    const { data: all, error } = await sb.from('movements').select('id, name');
+    if (error) throw error;
+    const want = normName(displayName);
+    const candidates = [want, ...(PR_ALIASES[want] || [])];
+    for (const c of candidates) {
+      const hit = (all || []).find(m => normName(m.name) === c);
+      if (hit) return hit.id;
+    }
+    const { data, error: insErr } = await sb.from('movements').insert({ name: displayName }).select().single();
+    if (insErr) throw insErr;
+    return data.id;
+  }
+  let prFlash = null; // one-time confirmation shown on the records page after saving
+
   const CUSTOM_TYPE_LABELS = {
     hyrox: 'Hyrox',
     zone2_machine: 'Zone 2 — Machine',
@@ -294,7 +349,6 @@
       root.innerHTML = `
         ${topBarHtml(false)}
         <div class="page-title">Movement History</div>
-        <div class="sub">Pick a lift or custom workout to see every session over time</div>
         <button class="movement-row pr-board-btn" id="prBoardBtn" type="button">
           <span class="mv-name">🏆 Personal Records</span>
           <span class="mv-count" style="color:var(--chalk);">all lifts →</span>
@@ -342,7 +396,7 @@
       return;
     }
     const sessions = data || [];
-    const isBodyweight = isBodyweightMovement(movementName);
+    const isBodyweight = isRepMaxMovement(movementName); // bodyweight lifts and wall balls: best reps, not 1RM
 
     let html = `
       ${topBarHtml(true)}
@@ -376,7 +430,7 @@
         <div class="best-card">
           <div class="best-label">All-time best</div>
           <div class="best-value">${bestRow.reps_completed} reps</div>
-          <div class="best-sub">${fmtDate(bestRow.logged_at)}${bestRow.weight_lbs ? ` · ${bestRow.weight_lbs} lb added` : ''}</div>
+          <div class="best-sub">${fmtDate(bestRow.logged_at)}${bestRow.weight_lbs ? ` · ${bestRow.weight_lbs} lb` : ''}</div>
         </div>
         <div class="chart-card">${buildLineChartSvg(sessions.map(s => s.reps_completed || 0))}</div>
       `;
@@ -433,6 +487,15 @@
 
     root.innerHTML = html;
     wireTopBar(() => renderMovementPicker());
+
+    root.querySelectorAll('[data-del-manual]').forEach(btn => {
+      btn.onclick = async () => {
+        if (!confirm('Remove this manually entered record?')) return;
+        const { error: delErr } = await sb.from('strength_results').delete().eq('id', btn.dataset.delManual);
+        if (delErr) { alert(delErr.message); return; }
+        renderMovementDetail(movementId, movementName);
+      };
+    });
   }
 
   // ======================= PERSONAL RECORDS =======================
@@ -456,7 +519,7 @@
       if (!r.movements || !r.reps_completed) return; // skips cardio rounds, which carry no reps
       const id = r.movement_id;
       if (!byMovement[id]) {
-        byMovement[id] = { name: r.movements.name, actual: null, actualDate: null, calc: null, bestReps: 0, bestRepsDate: null };
+        byMovement[id] = { name: r.movements.name, actual: null, actualDate: null, calc: null, bestReps: 0, bestRepsDate: null, bestRepsWeight: null };
       }
       const m = byMovement[id];
       if (r.weight_lbs) {
@@ -467,12 +530,14 @@
           if (m.calc === null || est > m.calc) m.calc = est;
         }
       }
-      if (r.reps_completed > m.bestReps) { m.bestReps = r.reps_completed; m.bestRepsDate = r.logged_at; }
+      if (r.reps_completed > m.bestReps) {
+        m.bestReps = r.reps_completed; m.bestRepsDate = r.logged_at; m.bestRepsWeight = r.weight_lbs || null;
+      }
     });
 
     const all = Object.values(byMovement).sort((a, b) => a.name.localeCompare(b.name));
-    const loaded = all.filter(m => !isBodyweightMovement(m.name) && (m.actual !== null || m.calc !== null));
-    const bodyweight = all.filter(m => isBodyweightMovement(m.name) && m.bestReps > 0);
+    const loaded = all.filter(m => !isRepMaxMovement(m.name) && (m.actual !== null || m.calc !== null));
+    const bodyweight = all.filter(m => isRepMaxMovement(m.name) && m.bestReps > 0);
 
     const loadedRows = loaded.map(m => {
       const main = m.actual !== null
@@ -484,18 +549,146 @@
 
     const bodyweightRows = bodyweight.map(m =>
       `<div class="pr-row"><div class="pr-name">${esc(m.name)}</div>
-        <div class="pr-vals"><div class="pr-main">${m.bestReps} reps</div><div class="pr-sub">${fmtDate(m.bestRepsDate)}</div></div></div>`
+        <div class="pr-vals"><div class="pr-main">${m.bestReps} reps</div><div class="pr-sub">${fmtDate(m.bestRepsDate)}${m.bestRepsWeight ? ` · ${m.bestRepsWeight} lb` : ''}</div></div></div>`
     ).join('');
 
+    const flash = prFlash; prFlash = null;
     root.innerHTML = `
       ${topBarHtml(true)}
       <div class="page-title">Personal Records</div>
-      <div class="sub">Actual = a lift you really did. Estimated = calculated from multi-rep sets.</div>
+      ${flash ? `<div class="flash-ok">${esc(flash)}</div>` : ''}
+      <button class="movement-row pr-board-btn" id="addPrBtn" type="button">
+        <span class="mv-name">+ Enter a past PR</span>
+        <span class="mv-count" style="color:var(--chalk);">→</span>
+      </button>
       ${loadedRows ? `<div class="section-label">Lifts</div>${loadedRows}` : ''}
-      ${bodyweightRows ? `<div class="section-label">Bodyweight — best reps</div>${bodyweightRows}` : ''}
-      ${!loadedRows && !bodyweightRows ? `<div class="center-msg" style="margin-top:20px;">No records yet.</div>` : ''}
+      ${bodyweightRows ? `<div class="section-label">Best reps</div>${bodyweightRows}` : ''}
+      ${!loadedRows && !bodyweightRows ? `<div class="center-msg" style="margin-top:20px;">No records yet. Enter one above, or log a workout.</div>` : ''}
     `;
     wireTopBar(() => renderMovementPicker());
+    document.getElementById('addPrBtn').onclick = () => renderPrEntry();
+  }
+
+  // ======================= ENTER A PERSONAL RECORD =======================
+  // For a lift you've already done but never logged here — e.g. "my back squat PR is 395".
+  // It's saved like any other set, but tied to no workout, so it counts toward your
+  // records and history without appearing in any day's results.
+  const OTHER_LIFT = '__other__';
+  const CARDIO_NAME_PATTERNS = [
+    /\bbike(\s*erg)?\b/i, /\bski(\s*erg)?\b/i,
+    /^\s*(calorie\s+|cal\s+|meter\s+)?(row|rower|rowing|run|running|jog|jogging|swim|swimming)(\s+erg)?\s*$/i,
+  ];
+  // "pause squat" -> "Pause Squat" so new lifts match the style of the others.
+  // A name the person capitalized themselves is left exactly as typed.
+  function tidyLiftName(raw) {
+    const name = String(raw).replace(/\s+/g, ' ').trim();
+    return name === name.toLowerCase() ? name.replace(/\b[a-z]/g, c => c.toUpperCase()) : name;
+  }
+
+  async function renderPrEntry(errorMsg, prefill) {
+    const p = prefill || {};
+    const today = new Date();
+    const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+
+    // Suggestions for "Other lift": movements that already exist, so a typed name
+    // lines up with the one the workouts use instead of creating a near-duplicate.
+    let suggestions = [];
+    try {
+      const { data } = await sb.from('movements').select('id, name');
+      const curated = new Set(PR_LIFTS.map(normName));
+      suggestions = (data || []).map(m => m.name)
+        .filter(n => !curated.has(normName(n)) && !CARDIO_NAME_PATTERNS.some(pt => pt.test(n)))
+        .sort((a, b) => a.localeCompare(b));
+    } catch (e) { /* suggestions are a convenience only */ }
+
+    root.innerHTML = `
+      ${topBarHtml(true)}
+      <div class="page-title" style="font-size:32px;">Enter a Past PR</div>
+      <div class="sub">Add a lift you've already done. It counts toward your records right away.</div>
+      ${errorMsg ? `<div class="error-banner">${esc(errorMsg)}</div>` : ''}
+
+      <label class="form-label" for="prLift">Lift</label>
+      <select id="prLift" class="form-input">
+        ${PR_LIFTS.map(n => `<option value="${esc(n)}"${p.lift === n ? ' selected' : ''}>${esc(n)}</option>`).join('')}
+        <option value="${OTHER_LIFT}"${p.lift === OTHER_LIFT ? ' selected' : ''}>Other lift…</option>
+      </select>
+      <div id="prCustomWrap" style="display:${p.lift === OTHER_LIFT ? 'block' : 'none'};margin-top:10px;">
+        <input type="text" id="prCustomName" class="form-input" list="prLiftSuggestions" maxlength="60"
+               placeholder="Name of the lift" autocomplete="off" value="${esc(p.custom || '')}">
+        <datalist id="prLiftSuggestions">${suggestions.map(n => `<option value="${esc(n)}"></option>`).join('')}</datalist>
+      </div>
+
+      <div class="score-row" style="margin-top:14px;">
+        <div class="score-field"><label for="prWeight">Weight (lb)</label><input type="number" id="prWeight" inputmode="decimal" min="0" placeholder="395" value="${esc(p.weight ?? '')}"></div>
+        <div class="score-field"><label for="prReps">Reps</label><input type="number" id="prReps" inputmode="numeric" min="1" value="${esc(p.reps ?? 1)}"></div>
+      </div>
+      <div class="sub" style="margin:8px 0 0;font-size:16px;">1 rep counts as an actual 1RM. More than 1 rep is used to calculate an estimated 1RM.</div>
+
+      <label class="form-label" for="prDate" style="margin-top:14px;">Date</label>
+      <input type="date" id="prDate" class="form-input" value="${esc(p.date || todayStr)}" max="${todayStr}">
+
+      <label class="form-label" for="prNotes" style="margin-top:14px;">Notes (optional)</label>
+      <input type="text" id="prNotes" class="form-input" placeholder="e.g. competition, belt used, how it felt" value="${esc(p.notes || '')}">
+
+      <button class="log-btn" id="savePrBtn" style="margin-top:22px;">Save record</button>
+    `;
+    wireTopBar(() => renderPrBoard());
+
+    const sel = document.getElementById('prLift');
+    sel.onchange = () => {
+      document.getElementById('prCustomWrap').style.display = sel.value === OTHER_LIFT ? 'block' : 'none';
+      if (sel.value === OTHER_LIFT) document.getElementById('prCustomName').focus();
+    };
+
+    document.getElementById('savePrBtn').onclick = async () => {
+      // Remember what was typed so a validation message never wipes the form
+      const entered = {
+        lift: sel.value,
+        custom: document.getElementById('prCustomName').value,
+        weight: document.getElementById('prWeight').value,
+        reps: document.getElementById('prReps').value,
+        date: document.getElementById('prDate').value,
+        notes: document.getElementById('prNotes').value,
+      };
+      let lift = entered.lift;
+      if (lift === OTHER_LIFT) {
+        lift = tidyLiftName(entered.custom);
+        if (!lift) return renderPrEntry('Type the name of the lift.', entered);
+      }
+      const weight = parseFloat(entered.weight);
+      const reps = parseInt(entered.reps, 10);
+      const notes = entered.notes.trim() || null;
+      // Bodyweight lifts and wall balls are records of reps, so weight is optional for them
+      const weightRequired = !isRepMaxMovement(lift);
+
+      if (weightRequired && !(weight > 0)) return renderPrEntry('Enter the weight you lifted.', entered);
+      if (!(reps >= 1)) return renderPrEntry('Reps must be at least 1.', entered);
+      if (!entered.date) return renderPrEntry('Pick the date you did it.', entered);
+      if (entered.date > todayStr) return renderPrEntry('That date is in the future.', entered);
+
+      document.getElementById('savePrBtn').disabled = true;
+      try {
+        const weightVal = weight > 0 ? weight : null;
+        const movementId = await resolveMovementId(lift);
+        const [y, m, d] = entered.date.split('-').map(Number);
+        const { error } = await sb.from('strength_results').insert({
+          movement_id: movementId,
+          set_number: 1,
+          reps_completed: reps,
+          weight_lbs: weightVal,
+          notes,
+          // noon local time keeps the date correct in every timezone
+          logged_at: new Date(y, m - 1, d, 12, 0, 0).toISOString(),
+        });
+        if (error) throw error;
+        prFlash = weightVal
+          ? `Saved: ${lift} — ${weightVal} lb × ${reps}${reps === 1 ? ' (actual 1RM)' : ''}`
+          : `Saved: ${lift} — ${reps} reps`;
+        renderPrBoard();
+      } catch (e) {
+        renderPrEntry(e.message || String(e), entered);
+      }
+    };
   }
 
   // ======================= CUSTOM WORKOUT TYPE DETAIL =======================
@@ -560,9 +753,13 @@
     const rows = sessions.slice().reverse().map(s => {
       const { val, isPR, prLabel, est } = describe(s);
       const tag = isPR ? `<span class="s-pr${est ? ' s-est' : ''}">${esc(prLabel || 'PR')}</span>` : '';
+      // A record entered by hand has no workout. Say so, and let it be removed if mistyped.
+      const manual = s.segment_id == null && s.id != null
+        ? `<span class="s-notes">entered manually · <button class="nav-link-btn" data-del-manual="${s.id}" type="button">remove</button></span>`
+        : '';
       return `<div class="session-row">
         <span class="s-date">${fmtDate(s.logged_at)}</span>
-        <span class="s-val">${val}${tag}${s.notes ? `<span class="s-notes">${esc(s.notes)}</span>` : ''}</span>
+        <span class="s-val">${val}${tag}${s.notes ? `<span class="s-notes">${esc(s.notes)}</span>` : ''}${manual}</span>
       </div>`;
     }).join('');
     return `<div>${rows}</div>`;
