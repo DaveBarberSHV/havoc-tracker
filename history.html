@@ -312,7 +312,10 @@
         searchEl.focus();
         searchEl.setSelectionRange(searchEl.value.length, searchEl.value.length);
       }
-      document.querySelectorAll('.movement-row').forEach(btn => {
+      // Only rows that carry a data-kind are real lifts/custom workouts. The
+      // Personal Records button shares the .movement-row styling but must keep
+      // its own click action, so it's excluded here.
+      document.querySelectorAll('.movement-row[data-kind]').forEach(btn => {
         btn.onclick = () => {
           if (btn.dataset.kind === 'custom') {
             renderCustomTypeDetail(btn.dataset.type, btn.dataset.label);
