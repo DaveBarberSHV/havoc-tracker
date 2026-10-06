@@ -303,6 +303,12 @@
     const d = parseDateOnly(dateStr);
     return d.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
   }
+  // Today's date where YOU are, as YYYY-MM-DD. Not new Date().toISOString(): that is the UTC date,
+  // which after about 8 PM Eastern is already tomorrow.
+  function localDateStr(d) {
+    d = d || new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
   function parseLeadingInt(text) {
     if (!text) return null;
     const m = String(text).match(/(\d+)/);
@@ -417,7 +423,7 @@
       render();
     });
     if (state.session) {
-      await loadWorkoutForDate(new Date().toISOString().slice(0, 10));
+      await loadWorkoutForDate(localDateStr());
     }
 
     // If we arrived via a menu link from another page (This Week, Movement
@@ -644,7 +650,7 @@
 
   async function goToday() {
     root.innerHTML = `<div class="center-msg">Loading…</div>`;
-    await loadWorkoutForDate(new Date().toISOString().slice(0, 10));
+    await loadWorkoutForDate(localDateStr());
     render();
   }
 
@@ -678,7 +684,7 @@
 
   function renderCustomEntry() {
     let selectedType = 'hyrox';
-    let selectedDate = new Date().toISOString().slice(0, 10);
+    let selectedDate = localDateStr();
 
     function draw() {
       const typeButtonsHtml = CUSTOM_TYPES.map(t =>
@@ -745,7 +751,7 @@
           root.innerHTML = `<div class="center-msg">✅<br><br>Logged "${esc(title)}" for ${esc(selectedDate)}.</div>
             <button class="secondary-btn" id="doneCustomBtn" style="margin-top:30px;">Back to today</button>`;
           document.getElementById('doneCustomBtn').onclick = async () => {
-            await loadWorkoutForDate(new Date().toISOString().slice(0, 10));
+            await loadWorkoutForDate(localDateStr());
             render();
           };
         } catch (e) {

@@ -98,7 +98,12 @@
     if (reps <= 1) return weight;
     return weight * (1 + reps / 30);
   }
-  function isoDate(d) { return d.toISOString().slice(0, 10); }
+  // The LOCAL calendar date as YYYY-MM-DD. Not toISOString(): that gives the UTC date, which
+  // after about 8 PM Eastern is already tomorrow — shifting the whole week forward a day
+  // and dropping Monday off the page.
+  function isoDate(d) {
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
   function fmtShort(dstr) {
     const d = new Date(dstr + 'T12:00:00');
     return `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${d.getMonth()+1}/${d.getDate()}`;
@@ -200,7 +205,7 @@
         let priorActual = null, priorCalc = null;
         let weekActualRow = null, weekCalcRow = null, weekCalcVal = null;
         for (const row of allRows) {
-          const rowDate = row.logged_at.slice(0, 10);
+          const rowDate = isoDate(new Date(row.logged_at)); // the date it was lifted where you are, not the UTC date
           const inWeek = rowDate >= weekDates[0] && rowDate <= weekDates[4];
           const isPrior = rowDate < weekDates[0];
           if (row.reps_completed === 1) {
