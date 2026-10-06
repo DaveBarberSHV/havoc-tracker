@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Havoc Tracker — Challenge Organizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<style>
+  :root {
+    --bg: #17181A; --panel: #1F2124; --panel-2: #26282C; --chalk: #F2EFE9; --chalk-dim: #A9A7A2;
+    --accent: #C1443B; --accent-dim: #7A2C27; --good: #7FA66B; --radius: 14px; box-sizing: border-box;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; background: var(--bg); color: var(--chalk);
+    font-family: 'Barlow Condensed', ui-sans-serif, system-ui, sans-serif; }
+  #root { max-width: 520px; margin: 0 auto; min-height: 100%;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px calc(32px + env(safe-area-inset-bottom, 0px)); }
+  h1, h2, h3, p { margin: 0; }
+
+  .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; min-height: 40px; }
+  .hamburger-btn {
+    background: none; border: none; color: var(--chalk); font-size: 28px; padding: 4px 10px 4px 0;
+    line-height: 1; touch-action: manipulation;
+  }
+  .menu-overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 100;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s ease;
+  }
+  .menu-overlay.open { opacity: 1; pointer-events: auto; }
+  .menu-panel {
+    position: fixed; top: 0; left: 0; right: 0; background: var(--panel); z-index: 101;
+    padding: calc(20px + env(safe-area-inset-top, 0px)) 20px 24px; border-radius: 0 0 18px 18px;
+    transform: translateY(-105%); transition: transform 0.25s ease; max-width: 480px; margin: 0 auto;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.4);
+  }
+  .menu-panel.open { transform: translateY(0); }
+  .menu-item {
+    display: block; width: 100%; text-align: left; background: var(--panel-2); color: var(--chalk);
+    border: none; border-radius: 10px; padding: 18px 18px; font-size: 24px; font-weight: 600;
+    font-family: 'Barlow Condensed', sans-serif; margin-bottom: 10px; text-decoration: none; touch-action: manipulation;
+  }
+  .menu-item:active { background: var(--accent-dim); }
+  .menu-close-btn {
+    display: block; width: 100%; text-align: center; background: none; border: none;
+    color: var(--chalk-dim); font-size: 19px; padding: 10px; margin-top: 4px; font-family: 'Barlow Condensed', sans-serif;
+  }
+  .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 2px; }
+  .date-range { color: var(--chalk-dim); font-size: 20px; margin-bottom: 18px; }
+
+  .stat-row { display: flex; gap: 12px; margin-bottom: 22px; }
+  .stat-card { flex: 1; background: var(--panel); border-radius: var(--radius); padding: 16px; text-align: center; }
+  .stat-num { font-family: 'JetBrains Mono', monospace; font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .stat-label { color: var(--chalk-dim); font-size: 16px; margin-top: 2px; }
+
+  .pr-section { margin-bottom: 22px; }
+  .pr-card {
+    background: var(--accent); color: var(--chalk); border-radius: 12px; padding: 14px 16px;
+    margin-bottom: 8px; font-size: 20px; font-weight: 600;
+  }
+  .pr-card .sub { display: block; font-size: 16px; font-weight: 500; opacity: 0.9; margin-top: 2px; }
+  .pr-card.est { background: var(--panel); border: 2px solid var(--accent); }
+
+  .day-card {
+    background: var(--panel); border-radius: var(--radius); padding: 16px 18px; margin-bottom: 12px;
+  }
+  .day-card.empty { opacity: 0.55; }
+  .day-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+  .day-name { font-size: 24px; font-weight: 700; }
+  .day-date { color: var(--chalk-dim); font-size: 17px; }
+  .day-line { font-size: 19px; padding: 4px 0; display: flex; justify-content: space-between; gap: 10px; }
+  .day-line .lbl { color: var(--chalk-dim); }
+  .day-line .val { font-family: 'JetBrains Mono', monospace; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
+  .not-logged { color: var(--chalk-dim); font-size: 18px; font-style: italic; }
+
+  .center-msg { text-align: center; color: var(--chalk-dim); font-size: 22px; margin-top: 60px; line-height: 1.5; }
+  .error-banner { background: var(--accent-dim); color: var(--chalk); padding: 14px 16px; border-radius: 10px; font-size: 18px; margin-bottom: 16px; }
+
+  /* ---- Organizer page ---- */
+  .page-title { font-size: 40px; font-weight: 700; line-height: 1.05; margin-bottom: 4px; }
+  .sub { color: var(--chalk-dim); font-size: 20px; margin-bottom: 14px; }
+  .org-select { width: 100%; padding: 12px 14px; border-radius: 10px; border: 2px solid var(--panel-2); background: var(--panel);
+    color: var(--chalk); font-family: inherit; font-size: 20px; margin-bottom: 14px; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px; }
+  .stat { background: var(--panel); border-radius: var(--radius); padding: 14px 16px; }
+  .stat .n { font-family: 'JetBrains Mono', monospace; font-size: 32px; font-weight: 700; line-height: 1.05; }
+  .stat .l { color: var(--chalk-dim); font-size: 17px; }
+  .btn-row { display: flex; gap: 10px; margin-bottom: 14px; }
+  .btn { flex: 1; padding: 13px 0; border-radius: 12px; border: 2px solid var(--panel-2); background: transparent; color: var(--chalk);
+    font-family: inherit; font-size: 19px; font-weight: 600; cursor: pointer; }
+  .athlete { background: var(--panel); border-radius: var(--radius); margin-bottom: 10px; overflow: hidden; }
+  .athlete-head { width: 100%; display: flex; justify-content: space-between; align-items: center; gap: 10px; text-align: left;
+    background: none; border: none; color: var(--chalk); font-family: inherit; padding: 14px 16px; cursor: pointer; }
+  .athlete-name { font-size: 23px; font-weight: 700; }
+  .athlete-email { color: var(--chalk-dim); font-size: 16px; word-break: break-all; }
+  .athlete-total { font-family: 'JetBrains Mono', monospace; font-size: 26px; font-weight: 700; text-align: right; }
+  .athlete-count { color: var(--chalk-dim); font-size: 16px; text-align: right; }
+  .athlete-body { padding: 0 12px 12px; }
+  .entry { display: flex; gap: 12px; align-items: center; background: var(--panel-2); border-radius: 10px; padding: 10px; margin-top: 8px; }
+  .entry.rejected { opacity: 0.6; }
+  .entry img { width: 76px; height: 76px; object-fit: cover; border-radius: 8px; background: #000; flex-shrink: 0; }
+  .entry .noimg { width: 76px; height: 76px; border-radius: 8px; background: #000; flex-shrink: 0; }
+  .entry-main { font-size: 22px; font-weight: 700; }
+  .entry-sub { color: var(--chalk-dim); font-size: 16px; }
+  .flag { display: inline-block; font-size: 15px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin: 3px 4px 0 0; background: var(--accent-dim); color: var(--chalk); }
+  .flag.info { background: var(--panel); color: var(--chalk-dim); border: 1px solid var(--chalk-dim); }
+  .entry-actions { margin-left: auto; }
+  .small-btn { background: none; border: 2px solid var(--chalk-dim); color: var(--chalk); border-radius: 8px; padding: 6px 10px;
+    font-family: inherit; font-size: 16px; cursor: pointer; }
+</style>
+</head>
+<body>
+<div id="root"><div class="center-msg">Loading…</div></div>
+
+<script>
+  // ======================= CONFIG =======================
+  const SUPABASE_URL = 'https://cdnjaoqkxztmdiaetwgh.supabase.co';
+  const SUPABASE_ANON_KEY = 'sb_publishable_6bfDWvU8DPWpzCS96XCQXg_jJc2AV5z';
+  // ========================================================
+
+  const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  const root = document.getElementById('root');
+
+  function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  function localDate(iso) {                       // the date an instant fell on, where the viewer is
+    const d = new Date(iso);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  }
+  function fmtShort(dstr) {
+    const d = new Date(dstr + 'T12:00:00');
+    return `${d.toLocaleDateString('en-US', { weekday: 'short' })} ${d.getMonth() + 1}/${d.getDate()}`;
+  }
+  function fmtMonthDay(dstr) {
+    return new Date(dstr + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+  function daysBetween(a, b) { return Math.round((new Date(b + 'T12:00:00') - new Date(a + 'T12:00:00')) / 86400000); }
+
+  // ---- state ----
+  let challenges = [];
+  let current = null;       // the challenge being viewed
+  let entries = [];         // every entry for it (organizers can see all), each with .profiles
+  let openUser = null;      // which athlete is expanded
+  let thumbs = {};          // storage path -> signed URL
+  let loadError = null;
+
+  // ---- CSV export ----
+  function csvCell(v) {
+    const s = v == null ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  }
+  function buildCsv(rows) {
+    const header = ['Name', 'Email', 'Date', 'Value', 'Status', 'Reason', 'Entered at', 'Edited at'];
+    const lines = [header.map(csvCell).join(',')];
+    rows.forEach(e => {
+      const p = e.profiles || {};
+      lines.push([p.display_name, p.email, e.entry_date, e.value, e.status, e.reject_reason, e.created_at, e.edited_at].map(csvCell).join(','));
+    });
+    return lines.join('\n');
+  }
+
+  // ---- numbers ----
+  function athleteRollup() {
+    const by = {};
+    entries.forEach(e => {
+      const k = e.user_id;
+      if (!by[k]) by[k] = { user_id: k, name: (e.profiles && e.profiles.display_name) || '(no name)', email: (e.profiles && e.profiles.email) || '', total: 0, counted: 0, rejected: 0, entries: [] };
+      const a = by[k];
+      a.entries.push(e);
+      if (e.status === 'accepted') { a.total += e.value || 0; a.counted += 1; } else { a.rejected += 1; }
+    });
+    return Object.values(by).sort((x, y) => y.total - x.total || x.name.localeCompare(y.name));
+  }
+  function duplicateHashes() {
+    const seen = {};
+    entries.forEach(e => { if (e.photo_hash) seen[e.photo_hash] = (seen[e.photo_hash] || 0) + 1; });
+    return new Set(Object.keys(seen).filter(h => seen[h] > 1));
+  }
+
+  // ---- data ----
+  async function loadEntries() {
+    const { data, error } = await sb.from('challenge_entries')
+      .select('*, profiles(display_name, email)')
+      .eq('challenge_id', current.id)
+      .order('entry_date', { ascending: false });
+    if (error) throw error;
+    entries = data || [];
+  }
+  async function loadThumbsFor(userId) {
+    const paths = entries.filter(e => e.user_id === userId).map(e => e.thumb_path || e.photo_path).filter(p => p && !thumbs[p]);
+    if (!paths.length) return;
+    const { data } = await sb.storage.from('challenge-photos').createSignedUrls(paths, 3600);
+    (data || []).forEach(r => { if (r && r.signedUrl) thumbs[r.path] = r.signedUrl; });
+  }
+  async function fullPhotoUrl(path) {
+    const { data } = await sb.storage.from('challenge-photos').createSignedUrl(path, 3600);
+    return data && data.signedUrl;
+  }
+
+  // ---- render ----
+  function menuHtml() {
+    return `
+      <div class="top-bar"><button class="hamburger-btn" id="menuBtn" type="button" aria-label="Menu">☰</button></div>
+      <div class="menu-overlay" id="menuOverlay"></div>
+      <div class="menu-panel" id="menuPanel">
+        <a class="menu-item" href="index.html">Today</a>
+        <a class="menu-item" href="summary.html">This Week</a>
+        <a class="menu-item" href="history.html">Movement History</a>
+        <a class="menu-item" href="index.html?action=pickday">Pick a Day</a>
+        <a class="menu-item" href="index.html?action=logcustom">Log Custom Workout</a>
+        <button class="menu-item" id="menuSignOut" type="button">Sign Out</button>
+        <button class="menu-close-btn" id="menuCloseBtn" type="button">Close</button>
+      </div>`;
+  }
+  function wireMenu() {
+    const overlay = document.getElementById('menuOverlay'), panel = document.getElementById('menuPanel');
+    const open = () => { overlay.classList.add('open'); panel.classList.add('open'); };
+    const close = () => { overlay.classList.remove('open'); panel.classList.remove('open'); };
+    document.getElementById('menuBtn').onclick = open;
+    overlay.onclick = close;
+    document.getElementById('menuCloseBtn').onclick = close;
+    document.getElementById('menuSignOut').onclick = async () => { close(); await sb.auth.signOut(); window.location.href = 'index.html'; };
+  }
+
+  function entryHtml(e, dupes) {
+    const rejected = e.status === 'rejected';
+    const flags = [];
+    if (e.photo_hash && dupes.has(e.photo_hash)) flags.push('<span class="flag">⚠ same photo used more than once</span>');
+    if (e.edited_at) flags.push('<span class="flag info">edited</span>');
+    const lag = daysBetween(e.entry_date, localDate(e.created_at));
+    if (lag >= 2) flags.push(`<span class="flag info">entered ${lag} days later</span>`);
+    if (rejected) flags.push(`<span class="flag">not counted${e.reject_reason ? ': ' + esc(e.reject_reason) : ''}</span>`);
+    const src = thumbs[e.thumb_path || e.photo_path];
+    const img = src
+      ? `<a href="#" data-full="${esc(e.photo_path)}" title="Open full photo"><img src="${esc(src)}" alt="Photo of the monitor"></a>`
+      : `<div class="noimg"></div>`;
+    return `<div class="entry${rejected ? ' rejected' : ''}">
+      ${img}
+      <div>
+        <div class="entry-main">${esc(fmtShort(e.entry_date))} · ${e.value}</div>
+        <div class="entry-sub">logged ${esc(fmtShort(localDate(e.created_at)))}</div>
+        <div>${flags.join('')}</div>
+      </div>
+      <div class="entry-actions">
+        ${rejected
+          ? `<button class="small-btn" data-restore="${e.id}" type="button">Restore</button>`
+          : `<button class="small-btn" data-reject="${e.id}" type="button">Reject</button>`}
+      </div>
+    </div>`;
+  }
+
+  function draw() {
+    const rollup = athleteRollup();
+    const dupes = duplicateHashes();
+    const countedTotal = rollup.reduce((s, a) => s + a.total, 0);
+    const entryCount = entries.length;
+    const rejectedCount = entries.filter(e => e.status === 'rejected').length;
+    const unit = current.unit_label || '';
+
+    root.innerHTML = `
+      ${menuHtml()}
+      <div class="page-title">Challenge Organizer</div>
+      <div class="sub">${esc(fmtMonthDay(current.start_date))} – ${esc(fmtMonthDay(current.end_date))}</div>
+      ${challenges.length > 1 ? `<select class="org-select" id="chPick">${challenges.map(c => `<option value="${c.id}"${c.id === current.id ? ' selected' : ''}>${esc(c.name)}</option>`).join('')}</select>` : `<div class="sub" style="margin-top:-6px;">${esc(current.name)}</div>`}
+      ${loadError ? `<div class="error-banner" style="margin-bottom:12px;">${esc(loadError)}</div>` : ''}
+      <div class="stat-grid">
+        <div class="stat"><div class="n" id="statTotal">${countedTotal}</div><div class="l">total ${esc(unit)} counted</div></div>
+        <div class="stat"><div class="n" id="statAthletes">${rollup.length}</div><div class="l">athletes</div></div>
+        <div class="stat"><div class="n">${entryCount}</div><div class="l">entries</div></div>
+        <div class="stat"><div class="n">${rejectedCount}</div><div class="l">not counted</div></div>
+      </div>
+      <div class="btn-row"><button class="btn" id="csvBtn" type="button">Download CSV</button><button class="btn" id="refreshBtn" type="button">Refresh</button></div>
+      <div id="athletes">
+        ${rollup.length ? rollup.map(a => `
+          <div class="athlete">
+            <button class="athlete-head" data-user="${esc(a.user_id)}" type="button">
+              <div><div class="athlete-name">${esc(a.name)}</div><div class="athlete-email">${esc(a.email)}</div></div>
+              <div><div class="athlete-total">${a.total}</div><div class="athlete-count">${a.counted} ${a.counted === 1 ? 'entry' : 'entries'}${a.rejected ? ` · ${a.rejected} not counted` : ''}</div></div>
+            </button>
+            ${openUser === a.user_id ? `<div class="athlete-body">${a.entries.map(e => entryHtml(e, dupes)).join('')}</div>` : ''}
+          </div>`).join('') : `<div class="center-msg" style="margin-top:30px;">No entries yet.</div>`}
+      </div>
+    `;
+    wireMenu();
+
+    const pick = document.getElementById('chPick');
+    if (pick) pick.onchange = async () => { current = challenges.find(c => String(c.id) === pick.value); openUser = null; await refresh(); };
+    document.getElementById('refreshBtn').onclick = () => refresh();
+    document.getElementById('csvBtn').onclick = () => {
+      const blob = new Blob([buildCsv(entries)], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${current.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    };
+
+    root.querySelectorAll('.athlete-head').forEach(btn => {
+      btn.onclick = async () => {
+        const id = btn.dataset.user;
+        openUser = openUser === id ? null : id;
+        if (openUser) await loadThumbsFor(openUser);
+        draw();
+      };
+    });
+    root.querySelectorAll('[data-full]').forEach(a => {
+      a.onclick = async (ev) => {
+        ev.preventDefault();
+        const url = await fullPhotoUrl(a.dataset.full);
+        if (url) window.open(url, '_blank', 'noopener');
+      };
+    });
+    root.querySelectorAll('[data-reject]').forEach(b => {
+      b.onclick = async () => {
+        const reason = prompt('Why is this entry not counted? (optional — the athlete will see it)');
+        if (reason === null) return;                               // cancelled
+        await setStatus(Number(b.dataset.reject), 'rejected', reason);
+      };
+    });
+    root.querySelectorAll('[data-restore]').forEach(b => {
+      b.onclick = async () => { await setStatus(Number(b.dataset.restore), 'accepted', null); };
+    });
+  }
+
+  async function setStatus(entryId, status, reason) {
+    const { error } = await sb.rpc('set_challenge_entry_status', { p_entry_id: entryId, p_status: status, p_reason: reason });
+    if (error) { loadError = error.message; draw(); return; }
+    loadError = null;
+    await refresh();
+  }
+
+  async function refresh() {
+    try {
+      await loadEntries();
+      loadError = null;
+      if (openUser) await loadThumbsFor(openUser);
+    } catch (e) { loadError = e.message || String(e); }
+    draw();
+  }
+
+  async function main() {
+    const { data: sessionData } = await sb.auth.getSession();
+    if (!sessionData.session) {
+      root.innerHTML = `<div class="center-msg">Not signed in.<br><br><a href="index.html" style="color:#F2EFE9;">Go to the main app to sign in</a>, then come back here.</div>`;
+      return;
+    }
+    try {
+      const { data: isAdmin } = await sb.rpc('is_challenge_admin');
+      if (isAdmin !== true) {
+        root.innerHTML = `${menuHtml()}<div class="center-msg">This page is for challenge organizers.</div>`;
+        wireMenu();
+        return;
+      }
+      const { data: chs, error } = await sb.from('challenges').select('*').order('start_date', { ascending: false });
+      if (error) throw error;
+      challenges = chs || [];
+      if (!challenges.length) {
+        root.innerHTML = `${menuHtml()}<div class="center-msg">No challenges have been set up yet.</div>`;
+        wireMenu();
+        return;
+      }
+      const today = localDate(new Date().toISOString());
+      current = challenges.find(c => c.start_date <= today && today <= c.end_date) || challenges[0];
+      await refresh();
+    } catch (e) {
+      root.innerHTML = `<div class="error-banner">${esc(e.message || String(e))}</div>`;
+    }
+  }
+
+  main();
+</script>
+</body>
+</html>

@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 6, 2026
+Last updated: Oct 7, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -60,20 +60,23 @@ considered. Add new ideas under the closest heading as they come up.
 - [ ] A simple feedback channel (group text or shared note) so reports don't all route through one person
 - [ ] Resend free tier is 100 emails/day; fine for now, revisit if invites come in waves
 
-### Planned: Echo Bike Challenge (charity, real dates Nov 8-21; test run first)
-Decisions so far — build inside Havoc Tracker as a reusable "Challenges" feature:
-- [ ] Athlete types calories; a photo of the monitor is REQUIRED to save (typed number + photo as proof)
-- [ ] Date defaults to today, editable, but only within the challenge window (dates live in a settings table, not in code)
-- [ ] Each athlete sees only their own total for the window. No leaderboard.
-- [ ] Organizer page (Anthony, plus Dave) with totals per athlete, photo thumbnails, reject-with-reason, CSV export
-- [ ] Display name collected on first use; visible to organizers only (tell athletes what organizers can see)
-- [ ] Shrink photos before upload (~250 KB, plus a small thumbnail) to stay inside the free 1 GB storage
-- [ ] Private photo storage; delete photos after the challenge
+### Echo Bike Challenge (charity; real dates Nov 8-21) — BUILT, awaiting real-phone test
+Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and instructions live in the database.
+- [x] Athlete enters calories (the CALORIES box on the monitor); a photo is REQUIRED
+- [x] Date defaults to today, editable, limited to the challenge window (never the future)
+- [x] Athletes see only their own total; no leaderboard; can edit or remove their own counted entries
+- [x] Organizer page (organizer.html) for Anthony and Dave: totals, per-athlete entries with photos, reject/restore with a reason, CSV export
+- [x] Name collected on first use; visible to organizers only
+- [x] Photos shrunk before upload (about 210 KB per entry, so ~146 MB for 700 entries)
+- [x] Private photo storage; organizers and the athlete themselves can see a photo, nobody else
+- [x] Integrity flags for the organizer: same photo used twice, entered days late, edited
+- [x] "Log Challenge Progress" button on the home screen, only while a challenge is active
+- [ ] Run havoc_challenge_migration.sql, then deploy index.html and organizer.html
+- [ ] Real-phone test with a few people (camera and photo upload on iPhone) before announcing
+- [ ] Have Anthony sign in once, a few days early (check spam for the sign-in email)
+- [ ] When ready, insert the real Nov 8-21 challenge (the SQL is commented at the bottom of the migration)
+- [ ] After the challenge: export the CSV, then delete the photos
 - [ ] Optional later: AI cross-check of the photo against the typed number, flagging mismatches (about $2 for ~700 photos; needs a small server-side function)
-- [ ] Add a "Log Challenge Progress" button to the home screen, shown only while a challenge is active
-- [ ] Before building: confirm whether the Echo monitor's calories keep accumulating across intervals or reset; set a one-line rule ("photograph the screen when you finish")
-- [ ] Keep the email-the-photo method as a fallback during the test run
-- [ ] Real-phone test with a few people (camera upload) before announcing
 
 ### Entry app
 - [ ] **Editable reps** for strength sets. Currently locked to the number in the prescribed

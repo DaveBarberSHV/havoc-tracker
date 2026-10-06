@@ -207,6 +207,17 @@
   .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 12px; }
   .day-pick-list { display: flex; flex-direction: column; gap: 8px; }
 
+  .home-link { background: none; border: none; color: var(--chalk-dim); font-family: inherit; font-size: 19px;
+    text-decoration: underline; padding: 6px 4px; cursor: pointer; touch-action: manipulation; }
+  .flash-ok { background: #2c4a2c; color: var(--chalk); padding: 12px 16px; border-radius: 10px; font-size: 19px; margin: 8px 0 14px; }
+  .ch-total { font-family: 'JetBrains Mono', monospace; font-size: 64px; font-weight: 700; line-height: 1; }
+  .ch-total-label { color: var(--chalk-dim); font-size: 20px; margin-top: 6px; }
+  .ch-row { display: flex; justify-content: space-between; align-items: center; gap: 12px;
+    background: var(--panel); border-radius: 10px; padding: 12px 14px; margin-bottom: 8px; }
+  .ch-row-main { font-size: 22px; font-weight: 600; }
+  .ch-row-sub { color: var(--chalk-dim); font-size: 17px; }
+  .ch-rejected .ch-row-main { text-decoration: line-through; color: var(--chalk-dim); }
+  .ch-actions { display: flex; gap: 8px; flex-shrink: 0; }
   .home-label { color: var(--chalk-dim); font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
   .home-date { font-size: 36px; font-weight: 700; line-height: 1.1; margin: 0 0 8px; }
   .home-note { color: var(--chalk-dim); font-size: 20px; margin-bottom: 10px; }
@@ -289,6 +300,9 @@
     anyLogged: false,  // does the loaded workout have ANY results yet? (fresh vs. partly logged)
     loading: true,     // true until the first workout load finishes, so we don't flash an empty home
     onEntryDone: null, // where to go when a one-off entry finishes (e.g. back to Day Review)
+    challenge: null,       // the challenge running right now, if any
+    challengeTotal: 0,     // this athlete's counted total for it
+    isAdmin: false,        // is this person a challenge organizer?
   };
 
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -435,6 +449,7 @@
     });
     if (state.session) {
       await loadWorkoutForDate(localDateStr());
+      await loadChallengeState();
     }
     state.loading = false;
 
@@ -667,6 +682,7 @@
     state.onEntryDone = null;
     root.innerHTML = `<div class="center-msg">Loading…</div>`;
     await loadWorkoutForDate(localDateStr());
+    await loadChallengeState();
     render();
   }
 
@@ -1598,6 +1614,282 @@
     };
   }
 
+  // ======================= CHALLENGE =======================
+  // A gym challenge (e.g. the Echo Bike Challenge). The dates, name and instructions live in the
+  // database, so a new challenge needs no code change. Everything here is tolerant of the
+  // challenge tables not existing yet: the rest of the app works exactly as before without them.
+  async function loadChallengeState() {
+    state.challenge = null; state.challengeTotal = 0; state.isAdmin = false;
+    try {
+      const today = localDateStr();
+      const { data: ch, error } = await sb.from('challenges').select('*')
+        .lte('start_date', today).gte('end_date', today)
+        .order('start_date', { ascending: false }).limit(1);
+      if (error) throw error;
+      if (ch && ch.length) {
+        state.challenge = ch[0];
+        state.challengeTotal = await fetchChallengeTotal(ch[0].id);
+      }
+      const { data: isAdm } = await sb.rpc('is_challenge_admin');
+      state.isAdmin = isAdm === true;
+    } catch (e) { /* no challenge tables yet, or offline: simply no challenge buttons */ }
+  }
+  async function fetchChallengeTotal(challengeId) {
+    const { data } = await sb.from('challenge_entries').select('value')
+      .eq('challenge_id', challengeId).eq('status', 'accepted');
+    return (data || []).reduce((sum, r) => sum + (r.value || 0), 0);
+  }
+
+  function challengeHomeHtml() {
+    let h = '';
+    if (state.challenge) {
+      h += `<button class="secondary-btn" id="homeChallengeBtn" type="button">Log Challenge Progress</button>
+        <div class="home-note" style="margin:6px 0 0;">${esc(state.challenge.name)} · you: ${state.challengeTotal} ${esc(state.challenge.unit_label || '')}</div>`;
+    }
+    if (state.isAdmin) {
+      h += `<div style="margin:8px 0 6px;"><button class="home-link" id="homeOrganizerBtn" type="button">Challenge Organizer →</button></div>`;
+    }
+    return h;
+  }
+  function wireChallengeHome() {
+    const logBtn = document.getElementById('homeChallengeBtn');
+    if (logBtn) logBtn.onclick = () => renderChallenge();
+    const orgBtn = document.getElementById('homeOrganizerBtn');
+    if (orgBtn) orgBtn.onclick = () => { window.location.href = 'organizer.html'; };
+  }
+
+  // Shrinks a phone photo to a small JPEG (plus a thumbnail) before upload, so 700 photos fit
+  // easily in free storage, and fingerprints the original so the same photo can't quietly be
+  // used twice.
+  async function prepareChallengePhoto(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = new Image();
+      img.src = url;
+      await img.decode();
+      const toJpeg = (maxSide, quality) => new Promise((resolve, reject) => {
+        const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+        canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(b => b ? resolve(b) : reject(new Error('Could not process that photo.')), 'image/jpeg', quality);
+      });
+      const full = await toJpeg(1280, 0.8);
+      const thumb = await toJpeg(320, 0.7);
+      let hash = null;
+      try {
+        const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+        hash = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+      } catch (e) { /* fingerprinting is a convenience; skip if the browser can't */ }
+      return { full, thumb, hash };
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  }
+
+  function fmtMonthDay(dateStr) {
+    return parseDateOnly(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // First time only: ask for a name. Only organizers ever see it.
+  function renderChallengeName(profile, errorMsg) {
+    root.innerHTML = `
+      ${topBarHtml(true)}
+      <div class="home-label">${esc(state.challenge.name)}</div>
+      <div class="home-date" style="font-size:32px;">${profile ? 'Edit your name' : "What's your name?"}</div>
+      <div class="home-note">Only the challenge organizer sees your name and email. Other athletes see nothing.</div>
+      ${errorMsg ? `<div class="error-banner">${esc(errorMsg)}</div>` : ''}
+      <div class="notes-field">
+        <label for="chNameInput">Your name</label>
+        <input type="text" id="chNameInput" maxlength="60" autocomplete="name" value="${esc(profile ? profile.display_name : '')}">
+      </div>
+      <button class="log-btn" id="chNameSave" type="button">${profile ? 'Save' : 'Continue'}</button>
+    `;
+    wireTopBar(() => (profile ? renderChallenge() : goHome()));
+    document.getElementById('chNameSave').onclick = async () => {
+      const name = document.getElementById('chNameInput').value.trim();
+      if (!name) { renderChallengeName(profile, 'Please enter your name.'); return; }
+      const { error } = await sb.from('profiles').upsert({ user_id: state.session.user.id, display_name: name }, { onConflict: 'user_id' });
+      if (error) { renderChallengeName(profile, error.message); return; }
+      renderChallenge();
+    };
+  }
+
+  async function renderChallenge(flash) {
+    const ch = state.challenge;
+    if (!ch) { goHome(); return; }
+    root.innerHTML = `${topBarHtml(true)}<div class="center-msg">Loading…</div>`;
+    wireTopBar(() => goHome());
+    const uid = state.session.user.id;
+
+    const { data: profRows, error: pErr } = await sb.from('profiles').select('*').eq('user_id', uid).limit(1);
+    if (pErr) { root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(pErr.message)}</div>`; wireTopBar(() => goHome()); return; }
+    const profile = (profRows && profRows[0]) || null;
+    if (!profile) { renderChallengeName(null); return; }
+
+    const { data: entryRows, error: eErr } = await sb.from('challenge_entries').select('*')
+      .eq('challenge_id', ch.id)
+      .order('entry_date', { ascending: false });
+    if (eErr) { root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(eErr.message)}</div>`; wireTopBar(() => goHome()); return; }
+    let entries = entryRows || [];
+    let editingId = null;
+
+    const today = localDateStr();
+    const maxDate = today < ch.end_date ? today : ch.end_date;
+    const unit = ch.unit_label || '';
+    const $ = (id) => document.getElementById(id);
+    const counted = () => entries.filter(e => e.status === 'accepted');
+    const total = () => counted().reduce((sum, e) => sum + (e.value || 0), 0);
+
+    root.innerHTML = `
+      ${topBarHtml(true)}
+      <div class="home-label">${esc(fmtMonthDay(ch.start_date))} – ${esc(fmtMonthDay(ch.end_date))}</div>
+      <div class="home-date" style="font-size:32px;">${esc(ch.name)}</div>
+      <div class="home-note">Hi, ${esc(profile.display_name)} · <button class="home-link" id="chEditName" type="button">edit name</button></div>
+      ${flash ? `<div class="flash-ok" id="chFlash">${esc(flash)}</div>` : ''}
+
+      <div class="entry-card" style="text-align:center;">
+        <div class="ch-total" id="chTotal">${total()}</div>
+        <div class="ch-total-label" id="chTotalLabel"></div>
+      </div>
+
+      ${ch.instructions ? `<div class="wod-details"><div class="wod-desc" style="font-size:19px;">${esc(ch.instructions)}</div></div>` : ''}
+
+      <div class="entry-card">
+        <div class="notes-field" style="margin-top:0;">
+          <label for="chDate">Date</label>
+          <input type="date" id="chDate" min="${esc(ch.start_date)}" max="${esc(maxDate)}" value="${esc(maxDate)}">
+        </div>
+        <div class="notes-field">
+          <label for="chValue">${esc(unit.charAt(0).toUpperCase() + unit.slice(1))} (the CALORIES box, bottom right of the monitor)</label>
+          <input type="number" inputmode="numeric" id="chValue" min="1" max="3000" placeholder="e.g. 49">
+        </div>
+        <div class="notes-field">
+          <label for="chPhoto">Photo of the monitor (required)</label>
+          <input type="file" id="chPhoto" accept="image/*">
+          <img id="chPreview" alt="" style="display:none;max-width:100%;border-radius:10px;margin-top:10px;">
+        </div>
+        <div class="error-banner" id="chError" style="display:none;margin-top:14px;"></div>
+        <button class="log-btn" id="chSave" type="button">Save</button>
+      </div>
+
+      <div class="prior-title" style="margin-top:26px;">Your entries</div>
+      <div id="chEntries"></div>
+    `;
+    wireTopBar(() => goHome());
+    $('chEditName').onclick = () => renderChallengeName(profile);
+
+    // A "Saved…" confirmation shouldn't linger once the athlete moves on to editing or removing something
+    const clearFlash = () => { const f = $('chFlash'); if (f) f.remove(); };
+    const showError = (msg) => { const b = $('chError'); b.textContent = msg; b.style.display = msg ? 'block' : 'none'; };
+    function updateTotal() {
+      state.challengeTotal = total();
+      $('chTotal').textContent = String(total());
+      $('chTotalLabel').textContent = `your total ${unit} · ${counted().length} ${counted().length === 1 ? 'entry' : 'entries'}`;
+    }
+    updateTotal();
+
+    $('chPhoto').onchange = () => {
+      const f = $('chPhoto').files && $('chPhoto').files[0];
+      const img = $('chPreview');
+      if (!f) { img.style.display = 'none'; return; }
+      try { img.src = URL.createObjectURL(f); img.style.display = 'block'; } catch (e) { /* preview is optional */ }
+    };
+
+    function drawEntries() {
+      const el = $('chEntries');
+      if (!entries.length) { el.innerHTML = `<div class="home-note">Nothing logged yet.</div>`; return; }
+      el.innerHTML = entries.map(e => {
+        if (editingId === e.id) {
+          return `<div class="ch-row"><div style="width:100%;">
+            <div class="score-row">
+              <div class="score-field"><label>Date</label><input type="date" id="editDate" min="${esc(ch.start_date)}" max="${esc(maxDate)}" value="${esc(e.entry_date)}"></div>
+              <div class="score-field"><label>${esc(unit)}</label><input type="number" inputmode="numeric" id="editValue" min="1" max="3000" value="${e.value}"></div>
+            </div>
+            <div class="ch-actions" style="margin-top:10px;">
+              <button class="home-link" id="editSave" type="button">Save</button>
+              <button class="home-link" id="editCancel" type="button">Cancel</button>
+            </div></div></div>`;
+        }
+        const rejected = e.status === 'rejected';
+        return `<div class="ch-row${rejected ? ' ch-rejected' : ''}">
+          <div>
+            <div class="ch-row-main">${esc(fmtShortWeekday(e.entry_date))} · ${e.value} ${esc(unit)}</div>
+            <div class="ch-row-sub">${rejected ? 'Not counted' + (e.reject_reason ? ': ' + esc(e.reject_reason) : '') : 'Counted'}${e.edited_at ? ' · edited' : ''}</div>
+          </div>
+          ${rejected ? '' : `<div class="ch-actions">
+            <button class="home-link" data-edit="${e.id}" type="button">Edit</button>
+            <button class="home-link" data-del="${e.id}" type="button">Remove</button></div>`}
+        </div>`;
+      }).join('');
+
+      el.querySelectorAll('[data-edit]').forEach(b => { b.onclick = () => { editingId = Number(b.dataset.edit); drawEntries(); }; });
+      const cancel = $('editCancel'); if (cancel) cancel.onclick = () => { editingId = null; drawEntries(); };
+      const save = $('editSave');
+      if (save) save.onclick = async () => {
+        const dateVal = $('editDate').value, valueNum = parseInt($('editValue').value, 10);
+        if (!dateVal || !(valueNum > 0)) { showError('Enter a date and a number.'); return; }
+        const patch = { value: valueNum, entry_date: dateVal, edited_at: new Date().toISOString() };
+        const { error } = await sb.from('challenge_entries').update(patch).eq('id', editingId);
+        if (error) { showError(error.message); return; }
+        showError(''); clearFlash();
+        Object.assign(entries.find(x => x.id === editingId), patch);
+        entries.sort((a, b) => (a.entry_date < b.entry_date ? 1 : a.entry_date > b.entry_date ? -1 : 0));
+        editingId = null; drawEntries(); updateTotal();
+      };
+      el.querySelectorAll('[data-del]').forEach(b => {
+        b.onclick = async () => {
+          if (!confirm('Remove this entry?')) return;
+          const entry = entries.find(x => x.id === Number(b.dataset.del));
+          const { error } = await sb.from('challenge_entries').delete().eq('id', entry.id);
+          if (error) { showError(error.message); return; }
+          try { await sb.storage.from('challenge-photos').remove([entry.photo_path, entry.thumb_path].filter(Boolean)); } catch (e) { /* leftover file is harmless */ }
+          showError(''); clearFlash();
+          entries = entries.filter(x => x.id !== entry.id);
+          drawEntries(); updateTotal();
+        };
+      });
+    }
+    drawEntries();
+
+    $('chSave').onclick = async () => {
+      const dateVal = $('chDate').value;
+      const valueNum = parseInt($('chValue').value, 10);
+      const file = $('chPhoto').files && $('chPhoto').files[0];
+      if (!dateVal || dateVal < ch.start_date || dateVal > maxDate) { showError(`Pick a date from ${fmtMonthDay(ch.start_date)} to ${fmtMonthDay(maxDate)}.`); return; }
+      if (!(valueNum > 0)) { showError(`Enter the ${unit} shown on the monitor.`); return; }
+      if (!file) { showError('A photo of the monitor is required.'); return; }
+
+      showError('');
+      const btn = $('chSave'); btn.disabled = true; btn.textContent = 'Saving…';
+      const bucket = sb.storage.from('challenge-photos');
+      let fullPath = null, thumbPath = null;
+      try {
+        const prepared = await prepareChallengePhoto(file);
+        const base = `${uid}/${ch.id}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        fullPath = `${base}.jpg`; thumbPath = `${base}_t.jpg`;
+        let up = await bucket.upload(fullPath, prepared.full, { contentType: 'image/jpeg' });
+        if (up.error) throw up.error;
+        up = await bucket.upload(thumbPath, prepared.thumb, { contentType: 'image/jpeg' });
+        if (up.error) throw up.error;
+        const { error } = await sb.from('challenge_entries').insert({
+          challenge_id: ch.id, entry_date: dateVal, value: valueNum,
+          photo_path: fullPath, thumb_path: thumbPath, photo_hash: prepared.hash,
+        });
+        if (error) throw error;
+        state.challengeTotal = total() + valueNum;
+        renderChallenge(`Saved: ${valueNum} ${unit} for ${fmtShortWeekday(dateVal)}`);
+      } catch (e) {
+        // Don't leave orphaned photos behind if the entry itself didn't save
+        const stray = [fullPath, thumbPath].filter(Boolean);
+        if (stray.length) { try { await bucket.remove(stray); } catch (_) { /* ignore */ } }
+        showError(e.message || String(e));
+        btn.disabled = false; btn.textContent = 'Save';
+      }
+    };
+  }
+
   // ======================= HOME =======================
   // The landing screen: the day's workout, with one clear button to log it.
   // The button reflects where you are: nothing logged yet, partly logged, or finished.
@@ -1617,9 +1909,11 @@
         ${topBarHtml(false)}
         <div class="home-date">No workout posted yet</div>
         <div class="home-note">Havoc posts each workout the evening before.</div>
+        ${challengeHomeHtml()}
         <button class="secondary-btn" id="homeCustomBtn" type="button">Log a Custom Workout</button>
       `;
       wireTopBar();
+      wireChallengeHome();
       document.getElementById('homeCustomBtn').onclick = () => renderCustomEntry();
       return;
     }
@@ -1637,10 +1931,12 @@
       ${isToday ? '' : `<div class="home-note">No class workout posted for today.</div>`}
       ${statusLine ? `<div class="home-status">${statusLine}</div>` : ''}
       ${label ? `<button class="log-btn" id="homePrimaryBtn" type="button" style="margin-top:6px;">${label}</button>` : ''}
+      ${challengeHomeHtml()}
       ${isToday ? '' : `<button class="secondary-btn" id="homeCustomBtn" type="button">Log a Custom Workout</button>`}
       ${full ? `<div class="home-workout"><div class="home-label">Workout</div><div class="wod-desc">${esc(full)}</div></div>` : ''}
     `;
     wireTopBar();
+    wireChallengeHome();
 
     const primary = document.getElementById('homePrimaryBtn');
     if (primary) primary.onclick = () => {
