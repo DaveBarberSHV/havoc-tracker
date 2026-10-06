@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 5, 2026
+Last updated: Oct 6, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -25,6 +25,7 @@ considered. Add new ideas under the closest heading as they come up.
 - [x] Custom workouts for days the gym doesn't post (Hyrox, Zone 2, conditioning, other)
 - [x] Hamburger menu on every page, with a back arrow only where there's somewhere to go back to
 - [x] WOD details: written description, benchmark name, and the full post as published
+- [x] Home screen: shows the full workout with one button that adapts (Log Today's Results / Continue Logging / Review / Edit Results)
 
 **Records and history**
 - [x] Weekly summary (days logged, reps, volume, PRs)
@@ -58,6 +59,21 @@ considered. Add new ideas under the closest heading as they come up.
       Cheapest to change before many people have it bookmarked.
 - [ ] A simple feedback channel (group text or shared note) so reports don't all route through one person
 - [ ] Resend free tier is 100 emails/day; fine for now, revisit if invites come in waves
+
+### Planned: Echo Bike Challenge (charity, real dates Nov 8-21; test run first)
+Decisions so far — build inside Havoc Tracker as a reusable "Challenges" feature:
+- [ ] Athlete types calories; a photo of the monitor is REQUIRED to save (typed number + photo as proof)
+- [ ] Date defaults to today, editable, but only within the challenge window (dates live in a settings table, not in code)
+- [ ] Each athlete sees only their own total for the window. No leaderboard.
+- [ ] Organizer page (Anthony, plus Dave) with totals per athlete, photo thumbnails, reject-with-reason, CSV export
+- [ ] Display name collected on first use; visible to organizers only (tell athletes what organizers can see)
+- [ ] Shrink photos before upload (~250 KB, plus a small thumbnail) to stay inside the free 1 GB storage
+- [ ] Private photo storage; delete photos after the challenge
+- [ ] Optional later: AI cross-check of the photo against the typed number, flagging mismatches (about $2 for ~700 photos; needs a small server-side function)
+- [ ] Add a "Log Challenge Progress" button to the home screen, shown only while a challenge is active
+- [ ] Before building: confirm whether the Echo monitor's calories keep accumulating across intervals or reset; set a one-line rule ("photograph the screen when you finish")
+- [ ] Keep the email-the-photo method as a fallback during the test run
+- [ ] Real-phone test with a few people (camera upload) before announcing
 
 ### Entry app
 - [ ] **Editable reps** for strength sets. Currently locked to the number in the prescribed

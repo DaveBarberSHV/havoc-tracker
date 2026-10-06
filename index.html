@@ -207,6 +207,11 @@
   .page-title { font-size: 40px; font-weight: 700; margin: 6px 0 12px; }
   .day-pick-list { display: flex; flex-direction: column; gap: 8px; }
 
+  .home-label { color: var(--chalk-dim); font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
+  .home-date { font-size: 36px; font-weight: 700; line-height: 1.1; margin: 0 0 8px; }
+  .home-note { color: var(--chalk-dim); font-size: 20px; margin-bottom: 10px; }
+  .home-status { color: var(--chalk-dim); font-size: 21px; margin-bottom: 4px; }
+  .home-workout { background: var(--panel); border-radius: var(--radius); padding: 16px; margin-top: 22px; }
   .wod-details { background: var(--panel); border-radius: var(--radius); padding: 14px 16px; margin-bottom: 16px; }
   .wod-desc { font-size: 21px; line-height: 1.45; white-space: pre-wrap; }
   .wod-dim { color: var(--chalk-dim); }
@@ -280,6 +285,10 @@
     taskIndex: 0,
     setNumber: 1,     // for strength tasks
     error: null,
+    view: 'home',      // 'home' (the landing screen) or 'entry' (logging a workout)
+    anyLogged: false,  // does the loaded workout have ANY results yet? (fresh vs. partly logged)
+    loading: true,     // true until the first workout load finishes, so we don't flash an empty home
+    onEntryDone: null, // where to go when a one-off entry finishes (e.g. back to Day Review)
   };
 
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
@@ -388,6 +397,8 @@
     return String(raw)
       .replace(/\u00a0/g, ' ')
       .replace(/\n+\s*Like\s*\n+\s*Loading[\s\S]*$/i, '')
+      .replace(/^[ \t]+|[ \t]+$/gm, '')          // stray spaces at the edges of lines
+      .replace(/^(\d+)\s*\.\s*$/gm, '$1.')      // a lone "1 ." line becomes "1."
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   }
@@ -420,11 +431,12 @@
     state.session = data.session;
     sb.auth.onAuthStateChange((_event, session) => {
       state.session = session;
-      render();
+      if (!state.loading) render();
     });
     if (state.session) {
       await loadWorkoutForDate(localDateStr());
     }
+    state.loading = false;
 
     // If we arrived via a menu link from another page (This Week, Movement
     // History), jump straight to the requested screen instead of the default.
@@ -455,7 +467,7 @@
       .from('workouts').select('*').lte('workout_date', dateStr)
       .order('workout_date', { ascending: false }).limit(1);
     if (wErr) { state.error = wErr.message; return; }
-    if (!workouts || workouts.length === 0) { state.workout = null; return; }
+    if (!workouts || workouts.length === 0) { state.workout = null; state.tasks = []; state.anyLogged = false; return; }
     state.workout = workouts[0];
 
     const { data: segments, error: sErr } = await sb
@@ -518,6 +530,7 @@
     }
     state.taskIndex = resumeIndex;
     state.setNumber = resumeSetNumber;
+    state.anyLogged = loggedWodSegIds.size > 0 || Object.keys(strengthMaxSet).length > 0;
   }
 
   async function loadMovementHistory(movementId) {
@@ -648,7 +661,10 @@
       </div>`;
   }
 
-  async function goToday() {
+  // Back to the home screen, re-reading today's workout so its logged/not-logged state is current.
+  async function goHome() {
+    state.view = 'home';
+    state.onEntryDone = null;
     root.innerHTML = `<div class="center-msg">Loading…</div>`;
     await loadWorkoutForDate(localDateStr());
     render();
@@ -664,7 +680,7 @@
     menuBtn.onclick = openMenu;
     overlay.onclick = closeMenu;
     closeBtn.onclick = closeMenu;
-    document.getElementById('menuToday').onclick = () => { closeMenu(); goToday(); };
+    document.getElementById('menuToday').onclick = () => { closeMenu(); goHome(); };
     document.getElementById('menuChangeDay').onclick = () => { closeMenu(); renderDayPicker(); };
     document.getElementById('menuLogCustom').onclick = () => { closeMenu(); renderCustomEntry(); };
     document.getElementById('menuSignOut').onclick = async () => {
@@ -722,7 +738,7 @@
         ${state.error ? `<div class="error-banner" style="margin-top:16px;">${esc(state.error)}</div>` : ''}
         <button class="log-btn" id="saveCustomBtn">Save custom workout</button>
       `;
-      wireTopBar(() => render());
+      wireTopBar(() => goHome());
 
       document.getElementById('customDate').onchange = (e) => { selectedDate = e.target.value; };
 
@@ -750,10 +766,7 @@
           state.error = null;
           root.innerHTML = `<div class="center-msg">✅<br><br>Logged "${esc(title)}" for ${esc(selectedDate)}.</div>
             <button class="secondary-btn" id="doneCustomBtn" style="margin-top:30px;">Back to today</button>`;
-          document.getElementById('doneCustomBtn').onclick = async () => {
-            await loadWorkoutForDate(localDateStr());
-            render();
-          };
+          document.getElementById('doneCustomBtn').onclick = () => goHome();
         } catch (e) {
           state.error = e.message;
           draw();
@@ -780,7 +793,7 @@
       <div class="page-title" style="font-size:32px;">Pick a day</div>
       <div class="day-pick-list">${rows}</div>
     `;
-    wireTopBar(() => render());
+    wireTopBar(() => goHome());
     root.querySelectorAll('.day-pick-row').forEach(btn => {
       btn.onclick = () => renderDayReview(btn.dataset.date);
     });
@@ -801,13 +814,16 @@
   // ======================= RENDER: DAY REVIEW =======================
   // Shows exactly what was logged for a given day, editable set-by-set —
   // distinct from the entry flow, which is for logging new sets forward.
-  async function renderDayReview(dateStr) {
+  // onBack: where the back arrow goes. Defaults to the day picker; the home screen passes
+  // its own so "Review / Edit Results" returns home.
+  async function renderDayReview(dateStr, onBack) {
+    const goBack = onBack || (() => renderDayPicker());
     root.innerHTML = `${topBarHtml(true)}<div class="center-msg">Loading…</div>`;
 
     const { data: workouts } = await sb.from('workouts').select('*').eq('workout_date', dateStr).limit(1);
     if (!workouts || !workouts.length) {
       root.innerHTML = `${topBarHtml(true)}<div class="center-msg">No workout found for ${esc(dateStr)}.</div>`;
-      wireTopBar(() => renderDayPicker());
+      wireTopBar(goBack);
       return;
     }
     const workout = workouts[0];
@@ -978,7 +994,7 @@
       }
 
       root.innerHTML = html;
-      wireTopBar(() => renderDayPicker());
+      wireTopBar(goBack);
 
       root.querySelectorAll('[data-edit-set]').forEach(btn => {
         btn.onclick = () => { editingKey = btn.dataset.editSet; draw(); };
@@ -993,9 +1009,12 @@
         btn.onclick = async () => {
           // Route into the normal single-task WOD entry flow for just this WOD
           const seg = wodSegs.find(s => s.id === Number(btn.dataset.logWod));
+          const wb = wodBlocks.find(b => b.segment.id === seg.id);
           state.workout = workout;
-          state.tasks = [{ type: 'wod', segment: seg }];
+          state.tasks = [{ type: 'wod', segment: seg, movements: (wb && wb.movements) || [] }];
           state.taskIndex = 0;
+          state.view = 'entry';
+          state.onEntryDone = () => renderDayReview(dateStr, onBack); // finish -> back to this review
           renderWod(state.tasks[0]);
         };
       });
@@ -1579,34 +1598,81 @@
     };
   }
 
-  // ======================= RENDER: DONE =======================
-  function renderDone() {
+  // ======================= HOME =======================
+  // The landing screen: the day's workout, with one clear button to log it.
+  // The button reflects where you are: nothing logged yet, partly logged, or finished.
+  function homeStatus() {
+    const tasks = state.tasks || [];
+    if (!tasks.length) return 'none';               // nothing loggable in this post
+    if (state.taskIndex >= tasks.length) return 'done';
+    return state.anyLogged ? 'partial' : 'fresh';
+  }
+
+  function renderHome() {
+    if (state.loading) { root.innerHTML = `<div class="center-msg">Loading…</div>`; return; }
+    const w = state.workout;
+
+    if (!w) {
+      root.innerHTML = `
+        ${topBarHtml(false)}
+        <div class="home-date">No workout posted yet</div>
+        <div class="home-note">Havoc posts each workout the evening before.</div>
+        <button class="secondary-btn" id="homeCustomBtn" type="button">Log a Custom Workout</button>
+      `;
+      wireTopBar();
+      document.getElementById('homeCustomBtn').onclick = () => renderCustomEntry();
+      return;
+    }
+
+    const isToday = w.workout_date === localDateStr();
+    const status = homeStatus();
+    const label = { fresh: isToday ? "Log Today's Results" : 'Log Results', partial: 'Continue Logging', done: 'Review / Edit Results' }[status];
+    const statusLine = status === 'done' ? '✅ All results logged' : status === 'partial' ? 'Partly logged' : '';
+    const full = cleanPostText(w.raw_text);
+
     root.innerHTML = `
       ${topBarHtml(false)}
-      <div class="center-msg">
-        ✅<br><br>
-        Workout logged for ${esc(fmtShortWeekday(state.workout.workout_date))}.<br><br>
-        Nice work.
-      </div>
-      <button class="secondary-btn" id="redoBtn" style="margin-top:30px;">Re-Enter Results</button>
+      <div class="home-label">${isToday ? 'Today' : 'Most recent workout'}</div>
+      <div class="home-date">${esc(fmtFullDate(w.workout_date))}</div>
+      ${isToday ? '' : `<div class="home-note">No class workout posted for today.</div>`}
+      ${statusLine ? `<div class="home-status">${statusLine}</div>` : ''}
+      ${label ? `<button class="log-btn" id="homePrimaryBtn" type="button" style="margin-top:6px;">${label}</button>` : ''}
+      ${isToday ? '' : `<button class="secondary-btn" id="homeCustomBtn" type="button">Log a Custom Workout</button>`}
+      ${full ? `<div class="home-workout"><div class="home-label">Workout</div><div class="wod-desc">${esc(full)}</div></div>` : ''}
     `;
     wireTopBar();
-    document.getElementById('redoBtn').onclick = () => {
-      state.taskIndex = 0;
-      state.setNumber = 1;
-      render();
+
+    const primary = document.getElementById('homePrimaryBtn');
+    if (primary) primary.onclick = () => {
+      if (status === 'done') renderDayReview(w.workout_date, () => goHome());
+      else startEntry();
     };
+    const custom = document.getElementById('homeCustomBtn');
+    if (custom) custom.onclick = () => renderCustomEntry();
+  }
+
+  // Begin (or resume) logging. The loader has already worked out where you left off.
+  function startEntry() {
+    state.view = 'entry';
+    render();
+  }
+
+  // The last step of an entry flow is done. Go where we were headed, otherwise home.
+  function finishEntry() {
+    if (state.onEntryDone) {
+      const next = state.onEntryDone;
+      state.onEntryDone = null;
+      next();
+      return;
+    }
+    goHome();
   }
 
   // ======================= MAIN RENDER =======================
   function render() {
     if (!state.session) { renderAuth(); return; }
-    if (!state.workout) {
-      root.innerHTML = `${topBarHtml(false)}<div class="center-msg">No class WOD found for today.<br><br>Normal on weekends/holidays — tap the menu (☰) to log something else (like Saturday Hyrox) or review a past day.</div>`;
-      wireTopBar();
-      return;
-    }
-    if (state.taskIndex >= state.tasks.length) { renderDone(); return; }
+    if (state.view === 'home') { renderHome(); return; }
+    if (state.taskIndex >= state.tasks.length) { finishEntry(); return; }
     const task = state.tasks[state.taskIndex];
     if (task.type === 'strength') renderStrength(task);
     else if (task.type === 'wod') renderWod(task);
