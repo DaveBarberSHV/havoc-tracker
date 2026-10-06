@@ -1920,8 +1920,8 @@
 
     const isToday = w.workout_date === localDateStr();
     const status = homeStatus();
-    const label = { fresh: isToday ? "Log Today's Results" : 'Log Results', partial: 'Continue Logging', done: 'Review / Edit Results' }[status];
-    const statusLine = status === 'done' ? '✅ All results logged' : status === 'partial' ? 'Partly logged' : '';
+    const label = { fresh: isToday ? "Log Today's WOD Results" : 'Log WOD Results', partial: 'Continue Logging WOD Results', done: 'Review / Edit WOD Results' }[status];
+    const statusLine = status === 'done' ? '✅ WOD results logged' : status === 'partial' ? 'WOD results partly logged' : '';
     const full = cleanPostText(w.raw_text);
 
     root.innerHTML = `

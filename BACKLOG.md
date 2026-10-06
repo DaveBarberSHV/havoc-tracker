@@ -25,7 +25,7 @@ considered. Add new ideas under the closest heading as they come up.
 - [x] Custom workouts for days the gym doesn't post (Hyrox, Zone 2, conditioning, other)
 - [x] Hamburger menu on every page, with a back arrow only where there's somewhere to go back to
 - [x] WOD details: written description, benchmark name, and the full post as published
-- [x] Home screen: shows the full workout with one button that adapts (Log Today's Results / Continue Logging / Review / Edit Results)
+- [x] Home screen: shows the full workout with one button that adapts (Log Today's WOD Results / Continue Logging WOD Results / Review / Edit WOD Results)
 
 **Records and history**
 - [x] Weekly summary (days logged, reps, volume, PRs)
