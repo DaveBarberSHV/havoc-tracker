@@ -143,6 +143,7 @@
   let entries = [];         // every entry for it (organizers can see all), each with .profiles
   let openUser = null;      // which athlete is expanded
   let thumbs = {};          // storage path -> signed URL
+  let editsByEntry = {};    // entry id -> its edit history, oldest first
   let loadError = null;
 
   // ---- CSV export ----
@@ -160,15 +161,18 @@
     return lines.join('\n');
   }
 
+  // Entries ABOVE this number are flagged so the organizer checks the photo (set per challenge; default 100)
+  const reviewThreshold = () => (current && current.review_threshold != null ? current.review_threshold : 100);
+
   // ---- numbers ----
   function athleteRollup() {
     const by = {};
     entries.forEach(e => {
       const k = e.user_id;
-      if (!by[k]) by[k] = { user_id: k, name: (e.profiles && e.profiles.display_name) || '(no name)', email: (e.profiles && e.profiles.email) || '', total: 0, counted: 0, rejected: 0, entries: [] };
+      if (!by[k]) by[k] = { user_id: k, name: (e.profiles && e.profiles.display_name) || '(no name)', email: (e.profiles && e.profiles.email) || '', total: 0, counted: 0, rejected: 0, large: 0, entries: [] };
       const a = by[k];
       a.entries.push(e);
-      if (e.status === 'accepted') { a.total += e.value || 0; a.counted += 1; } else { a.rejected += 1; }
+      if (e.status === 'accepted') { a.total += e.value || 0; a.counted += 1; if ((e.value || 0) > reviewThreshold()) a.large += 1; } else { a.rejected += 1; }
     });
     return Object.values(by).sort((x, y) => y.total - x.total || x.name.localeCompare(y.name));
   }
@@ -186,6 +190,15 @@
       .order('entry_date', { ascending: false });
     if (error) throw error;
     entries = data || [];
+  }
+  // What each edited entry used to say. Only organizers can read this, and athletes can't change it.
+  async function loadEdits() {
+    editsByEntry = {};
+    const ids = entries.map(e => e.id);
+    if (!ids.length) return;
+    const { data, error } = await sb.from('challenge_entry_edits').select('*').in('entry_id', ids).order('edited_at', { ascending: true });
+    if (error) return;   // history not set up yet: fall back to a plain "edited" tag
+    (data || []).forEach(r => { (editsByEntry[r.entry_id] = editsByEntry[r.entry_id] || []).push(r); });
   }
   async function loadThumbsFor(userId) {
     const paths = entries.filter(e => e.user_id === userId).map(e => e.thumb_path || e.photo_path).filter(p => p && !thumbs[p]);
@@ -227,7 +240,17 @@
     const rejected = e.status === 'rejected';
     const flags = [];
     if (e.photo_hash && dupes.has(e.photo_hash)) flags.push('<span class="flag">⚠ same photo used more than once</span>');
-    if (e.edited_at) flags.push('<span class="flag info">edited</span>');
+    const edits = editsByEntry[e.id] || [];
+    if (edits.length) {
+      const first = edits[0];
+      let t = `edited from ${first.old_value}`;
+      if (first.old_date !== e.entry_date) t += ` (was ${fmtShort(first.old_date)})`;
+      if (edits.length > 1) t += ` · ${edits.length} edits`;
+      flags.push(`<span class="flag">✎ ${esc(t)}</span>`);
+    } else if (e.edited_at) {
+      flags.push('<span class="flag info">edited</span>');
+    }
+    if (!rejected && (e.value || 0) > reviewThreshold()) flags.push(`<span class="flag">⚠ over ${reviewThreshold()}: check the photo</span>`);
     const lag = daysBetween(e.entry_date, localDate(e.created_at));
     if (lag >= 2) flags.push(`<span class="flag info">entered ${lag} days later</span>`);
     if (rejected) flags.push(`<span class="flag">not counted${e.reject_reason ? ': ' + esc(e.reject_reason) : ''}</span>`);
@@ -276,7 +299,7 @@
           <div class="athlete">
             <button class="athlete-head" data-user="${esc(a.user_id)}" type="button">
               <div><div class="athlete-name">${esc(a.name)}</div><div class="athlete-email">${esc(a.email)}</div></div>
-              <div><div class="athlete-total">${a.total}</div><div class="athlete-count">${a.counted} ${a.counted === 1 ? 'entry' : 'entries'}${a.rejected ? ` · ${a.rejected} not counted` : ''}</div></div>
+              <div><div class="athlete-total">${a.total}</div><div class="athlete-count">${a.counted} ${a.counted === 1 ? 'entry' : 'entries'}${a.large ? ` · ⚠ ${a.large} over ${reviewThreshold()}` : ''}${a.rejected ? ` · ${a.rejected} not counted` : ''}</div></div>
             </button>
             ${openUser === a.user_id ? `<div class="athlete-body">${a.entries.map(e => entryHtml(e, dupes)).join('')}</div>` : ''}
           </div>`).join('') : `<div class="center-msg" style="margin-top:30px;">No entries yet.</div>`}
@@ -333,6 +356,7 @@
   async function refresh() {
     try {
       await loadEntries();
+      await loadEdits();
       loadError = null;
       if (openUser) await loadThumbsFor(openUser);
     } catch (e) { loadError = e.message || String(e); }

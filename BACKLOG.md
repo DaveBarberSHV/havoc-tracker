@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 7, 2026
+Last updated: Oct 8, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -69,9 +69,12 @@ Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and i
 - [x] Name collected on first use; visible to organizers only
 - [x] Photos shrunk before upload (about 210 KB per entry, so ~146 MB for 700 entries)
 - [x] Private photo storage; organizers and the athlete themselves can see a photo, nobody else
-- [x] Integrity flags for the organizer: same photo used twice, entered days late, edited
+- [x] Integrity flags for the organizer: same photo used twice, entered days late, entries over 100 calories (a per-challenge setting), and edited entries show the ORIGINAL value ("edited from 94")
+- [x] Leaderboard: rank, name and total. Each athlete chooses "Alice S." or "Anonymous". Ties share a rank; gym-wide total on top; own row highlighted
+- [x] Entries count the moment they are saved. The organizer can reject at any time and totals and the leaderboard update immediately
+- [x] Final standings stay visible for 21 days after the end (a per-challenge setting). Home then shows "Challenge Results" instead of "Log Challenge Progress"
 - [x] "Log Challenge Progress" button on the home screen, only while a challenge is active
-- [ ] Run havoc_challenge_migration.sql, then deploy index.html and organizer.html
+- [ ] Run havoc_challenge_migration.sql, THEN havoc_leaderboard_migration.sql, then deploy index.html and organizer.html
 - [ ] Real-phone test with a few people (camera and photo upload on iPhone) before announcing
 - [ ] Have Anthony sign in once, a few days early (check spam for the sign-in email)
 - [ ] When ready, insert the real Nov 8-21 challenge (the SQL is commented at the bottom of the migration)
@@ -109,8 +112,8 @@ Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and i
       The activities table is stubbed. This was the original goal for the whole project.
 
 ### Housekeeping
-- [ ] Save the click-test scripts into the repo (tests/ folder). They currently live only in
-      the working environment and caught several real bugs that syntax checks missed.
+- [x] Click-test scripts packaged as havoc-tests.zip. Unzip into the repo root (adds tests/ and db/), then `npm install` and `npm test`.
+- [ ] Commit them, so they survive a reset of the working environment (they were lost once)
 
 ---
 

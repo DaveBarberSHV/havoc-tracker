@@ -218,6 +218,16 @@
   .ch-row-sub { color: var(--chalk-dim); font-size: 17px; }
   .ch-rejected .ch-row-main { text-decoration: line-through; color: var(--chalk-dim); }
   .ch-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .lb-row { display: flex; align-items: center; gap: 12px; background: var(--panel); border-radius: 10px;
+    padding: 12px 14px; margin-bottom: 8px; border: 2px solid transparent; }
+  .lb-me { border-color: var(--accent); }
+  .lb-rank { font-family: 'JetBrains Mono', monospace; font-size: 22px; font-weight: 700; width: 38px; color: var(--chalk-dim); }
+  .lb-name { flex: 1; font-size: 22px; font-weight: 600; }
+  .lb-total { font-family: 'JetBrains Mono', monospace; font-size: 24px; font-weight: 700; }
+  .radio-group { margin-top: 18px; }
+  .radio-label { color: var(--chalk-dim); font-size: 17px; margin-bottom: 4px; }
+  .radio-row { display: flex; align-items: center; gap: 10px; font-size: 20px; padding: 8px 0; cursor: pointer; }
+  .radio-row input { width: 22px; height: 22px; flex-shrink: 0; }
   .home-label { color: var(--chalk-dim); font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
   .home-date { font-size: 36px; font-weight: 700; line-height: 1.1; margin: 0 0 8px; }
   .home-note { color: var(--chalk-dim); font-size: 20px; margin-bottom: 10px; }
@@ -301,6 +311,8 @@
     loading: true,     // true until the first workout load finishes, so we don't flash an empty home
     onEntryDone: null, // where to go when a one-off entry finishes (e.g. back to Day Review)
     challenge: null,       // the challenge running right now, if any
+    challengeEnded: null,  // a challenge that just ended but is still showing its final standings
+    challengeRank: null,   // this athlete's place on the leaderboard (null = no entries yet)
     challengeTotal: 0,     // this athlete's counted total for it
     isAdmin: false,        // is this person a challenge organizer?
   };
@@ -1618,33 +1630,61 @@
   // A gym challenge (e.g. the Echo Bike Challenge). The dates, name and instructions live in the
   // database, so a new challenge needs no code change. Everything here is tolerant of the
   // challenge tables not existing yet: the rest of the app works exactly as before without them.
-  async function loadChallengeState() {
-    state.challenge = null; state.challengeTotal = 0; state.isAdmin = false;
-    try {
-      const today = localDateStr();
-      const { data: ch, error } = await sb.from('challenges').select('*')
-        .lte('start_date', today).gte('end_date', today)
-        .order('start_date', { ascending: false }).limit(1);
-      if (error) throw error;
-      if (ch && ch.length) {
-        state.challenge = ch[0];
-        state.challengeTotal = await fetchChallengeTotal(ch[0].id);
-      }
-      const { data: isAdm } = await sb.rpc('is_challenge_admin');
-      state.isAdmin = isAdm === true;
-    } catch (e) { /* no challenge tables yet, or offline: simply no challenge buttons */ }
+  function addDaysStr(dateStr, n) {
+    const d = parseDateOnly(dateStr); d.setDate(d.getDate() + n); return localDateStr(d);
+  }
+  async function fetchLeaderboard(challengeId) {
+    const { data, error } = await sb.rpc('get_challenge_leaderboard', { p_challenge_id: challengeId });
+    if (error) throw error;
+    return data || [];
   }
   async function fetchChallengeTotal(challengeId) {
     const { data } = await sb.from('challenge_entries').select('value')
       .eq('challenge_id', challengeId).eq('status', 'accepted');
     return (data || []).reduce((sum, r) => sum + (r.value || 0), 0);
   }
+  async function loadChallengeState() {
+    state.challenge = null; state.challengeEnded = null; state.challengeTotal = 0; state.challengeRank = null; state.isAdmin = false;
+    try {
+      const today = localDateStr();
+      const { data: ch, error } = await sb.from('challenges').select('*')
+        .lte('start_date', today).gte('end_date', today)
+        .order('start_date', { ascending: false }).limit(1);
+      if (error) throw error;
+      let shown = null;
+      if (ch && ch.length) {
+        state.challenge = ch[0]; shown = ch[0];
+      } else {
+        // Nothing running now. Has one ended recently enough that its final standings are still up?
+        const { data: past } = await sb.from('challenges').select('*').lt('end_date', today)
+          .order('end_date', { ascending: false }).limit(1);
+        if (past && past.length && today <= addDaysStr(past[0].end_date, past[0].results_days ?? 21)) {
+          state.challengeEnded = past[0]; shown = past[0];
+        }
+      }
+      if (shown) {
+        state.challengeTotal = await fetchChallengeTotal(shown.id);
+        try {
+          const me = (await fetchLeaderboard(shown.id)).find(r => r.lb_is_me);
+          state.challengeRank = me ? Number(me.lb_rank) : null;
+        } catch (e) { /* leaderboard not set up yet: just no rank shown */ }
+      }
+      const { data: isAdm } = await sb.rpc('is_challenge_admin');
+      state.isAdmin = isAdm === true;
+    } catch (e) { /* no challenge tables yet, or offline: simply no challenge buttons */ }
+  }
 
   function challengeHomeHtml() {
     let h = '';
-    if (state.challenge) {
+    const ch = state.challenge, past = state.challengeEnded;
+    const rank = state.challengeRank ? ` · #${state.challengeRank}` : '';
+    if (ch) {
       h += `<button class="secondary-btn" id="homeChallengeBtn" type="button">Log Challenge Progress</button>
-        <div class="home-note" style="margin:6px 0 0;">${esc(state.challenge.name)} · you: ${state.challengeTotal} ${esc(state.challenge.unit_label || '')}</div>`;
+        <div class="home-note" style="margin:6px 0 0;">${esc(ch.name)} · you: ${state.challengeTotal} ${esc(ch.unit_label || '')}${rank}</div>`;
+    } else if (past) {
+      const mine = state.challengeTotal > 0 ? `you ${state.challengeTotal} ${esc(past.unit_label || '')}${rank}` : 'see the standings';
+      h += `<button class="secondary-btn" id="homeResultsBtn" type="button">Challenge Results</button>
+        <div class="home-note" style="margin:6px 0 0;">${esc(past.name)} · final: ${mine}</div>`;
     }
     if (state.isAdmin) {
       h += `<div style="margin:8px 0 6px;"><button class="home-link" id="homeOrganizerBtn" type="button">Challenge Organizer →</button></div>`;
@@ -1654,6 +1694,8 @@
   function wireChallengeHome() {
     const logBtn = document.getElementById('homeChallengeBtn');
     if (logBtn) logBtn.onclick = () => renderChallenge();
+    const resBtn = document.getElementById('homeResultsBtn');
+    if (resBtn) resBtn.onclick = () => renderLeaderboard(state.challengeEnded, () => goHome());
     const orgBtn = document.getElementById('homeOrganizerBtn');
     if (orgBtn) orgBtn.onclick = () => { window.location.href = 'organizer.html'; };
   }
@@ -1692,28 +1734,87 @@
     return parseDateOnly(dateStr).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  // First time only: ask for a name. Only organizers ever see it.
-  function renderChallengeName(profile, errorMsg) {
+  // "Alice Smith" -> "Alice S." (a preview only; the database does the real formatting)
+  function shortName(name) {
+    const t = String(name).trim().split(/\s+/).filter(Boolean);
+    if (t.length >= 2) return `${t[0]} ${t[t.length - 1].charAt(0).toUpperCase()}.`;
+    return t[0] || '';
+  }
+
+  // Asks for a name and how to appear on the leaderboard. Shown the first time, and again for anyone
+  // who signed up before the leaderboard existed (they were promised privacy, so they are Anonymous
+  // until they choose).
+  function renderChallengeName(profile, errorMsg, draft) {
+    const d = draft || {};
+    const name = d.name !== undefined ? d.name : (profile ? profile.display_name : '');
+    const showName = d.showName !== undefined ? d.showName : !(profile && profile.show_name === false);
+    const needsChoice = !!profile && profile.show_name == null;
+    const title = !profile ? "What's your name?" : needsChoice ? 'Choose how you appear' : 'Edit your name';
     root.innerHTML = `
       ${topBarHtml(true)}
       <div class="home-label">${esc(state.challenge.name)}</div>
-      <div class="home-date" style="font-size:32px;">${profile ? 'Edit your name' : "What's your name?"}</div>
-      <div class="home-note">Only the challenge organizer sees your name and email. Other athletes see nothing.</div>
+      <div class="home-date" style="font-size:32px;">${title}</div>
+      ${needsChoice ? `<div class="home-note">There's now a leaderboard, so please choose how you'd like to appear.</div>` : ''}
+      <div class="home-note">The organizer always sees your full name and email. The leaderboard shows only what you choose below. Other athletes never see your email, entries or photos.</div>
       ${errorMsg ? `<div class="error-banner">${esc(errorMsg)}</div>` : ''}
       <div class="notes-field">
         <label for="chNameInput">Your name</label>
-        <input type="text" id="chNameInput" maxlength="60" autocomplete="name" value="${esc(profile ? profile.display_name : '')}">
+        <input type="text" id="chNameInput" maxlength="60" autocomplete="name" value="${esc(name)}">
+      </div>
+      <div class="radio-group">
+        <div class="radio-label">On the leaderboard</div>
+        <label class="radio-row"><input type="radio" name="chShow" id="chShowName" value="name"${showName ? ' checked' : ''}>
+          <span id="chShowNameText">Show me as “${esc(shortName(name) || 'Your Name')}”</span></label>
+        <label class="radio-row"><input type="radio" name="chShow" id="chShowAnon" value="anon"${showName ? '' : ' checked'}>
+          <span>Show me as “Anonymous” (my calories still count)</span></label>
       </div>
       <button class="log-btn" id="chNameSave" type="button">${profile ? 'Save' : 'Continue'}</button>
     `;
-    wireTopBar(() => (profile ? renderChallenge() : goHome()));
+    wireTopBar(() => (profile && !needsChoice ? renderChallenge() : goHome()));
+    document.getElementById('chNameInput').oninput = (ev) => {
+      document.getElementById('chShowNameText').textContent = `Show me as “${shortName(ev.target.value) || 'Your Name'}”`;
+    };
     document.getElementById('chNameSave').onclick = async () => {
-      const name = document.getElementById('chNameInput').value.trim();
-      if (!name) { renderChallengeName(profile, 'Please enter your name.'); return; }
-      const { error } = await sb.from('profiles').upsert({ user_id: state.session.user.id, display_name: name }, { onConflict: 'user_id' });
-      if (error) { renderChallengeName(profile, error.message); return; }
+      const typed = document.getElementById('chNameInput').value.trim();
+      const chosen = document.getElementById('chShowName').checked;
+      if (!typed) { renderChallengeName(profile, 'Please enter your name.', { name: typed, showName: chosen }); return; }
+      const { error } = await sb.from('profiles').upsert({ user_id: state.session.user.id, display_name: typed, show_name: chosen }, { onConflict: 'user_id' });
+      if (error) { renderChallengeName(profile, error.message, { name: typed, showName: chosen }); return; }
       renderChallenge();
     };
+  }
+
+  // The standings. Athletes see rank, a name they chose to show (or Anonymous) and a total, never anyone's
+  // email, entries or photos. Rejected entries are already excluded, so a rejection shows up right away.
+  async function renderLeaderboard(ch, onBack) {
+    const back = onBack || (() => goHome());
+    root.innerHTML = `${topBarHtml(true)}<div class="center-msg">Loading…</div>`;
+    wireTopBar(back);
+    let rows;
+    try { rows = await fetchLeaderboard(ch.id); }
+    catch (e) {
+      root.innerHTML = `${topBarHtml(true)}<div class="error-banner">The leaderboard isn't available right now. ${esc(e.message || '')}</div>`;
+      wireTopBar(back); return;
+    }
+    const ended = ch.end_date < localDateStr();
+    const unit = ch.unit_label || '';
+    const together = rows.reduce((sum, r) => sum + Number(r.lb_total || 0), 0);
+    root.innerHTML = `
+      ${topBarHtml(true)}
+      <div class="home-label">${esc(fmtMonthDay(ch.start_date))} – ${esc(fmtMonthDay(ch.end_date))}</div>
+      <div class="home-date" style="font-size:32px;">${ended ? 'Final standings' : 'Leaderboard'}</div>
+      <div class="home-note">${esc(ch.name)}</div>
+      <div class="entry-card" style="text-align:center;">
+        <div class="ch-total" id="lbTogether">${together}</div>
+        <div class="ch-total-label">together · ${esc(unit)} counted</div>
+      </div>
+      <div class="home-note" style="font-size:17px;">Totals can change if the organizer reviews an entry.${ended ? ` Results stay up until ${esc(fmtMonthDay(addDaysStr(ch.end_date, ch.results_days ?? 21)))}.` : ''}</div>
+      ${rows.length ? rows.map(r => `<div class="lb-row${r.lb_is_me ? ' lb-me' : ''}">
+          <div class="lb-rank">${r.lb_rank}</div>
+          <div class="lb-name">${esc(r.lb_name)}${r.lb_is_me ? ' (you)' : ''}</div>
+          <div class="lb-total">${r.lb_total}</div></div>`).join('') : `<div class="home-note">No entries yet.</div>`}
+    `;
+    wireTopBar(back);
   }
 
   async function renderChallenge(flash) {
@@ -1726,7 +1827,7 @@
     const { data: profRows, error: pErr } = await sb.from('profiles').select('*').eq('user_id', uid).limit(1);
     if (pErr) { root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(pErr.message)}</div>`; wireTopBar(() => goHome()); return; }
     const profile = (profRows && profRows[0]) || null;
-    if (!profile) { renderChallengeName(null); return; }
+    if (!profile || profile.show_name == null) { renderChallengeName(profile); return; }
 
     const { data: entryRows, error: eErr } = await sb.from('challenge_entries').select('*')
       .eq('challenge_id', ch.id)
@@ -1753,6 +1854,7 @@
         <div class="ch-total" id="chTotal">${total()}</div>
         <div class="ch-total-label" id="chTotalLabel"></div>
       </div>
+      <button class="secondary-btn" id="chLeaderboardBtn" type="button" style="margin:0 0 14px;">View Leaderboard</button>
 
       ${ch.instructions ? `<div class="wod-details"><div class="wod-desc" style="font-size:19px;">${esc(ch.instructions)}</div></div>` : ''}
 
@@ -1779,6 +1881,7 @@
     `;
     wireTopBar(() => goHome());
     $('chEditName').onclick = () => renderChallengeName(profile);
+    $('chLeaderboardBtn').onclick = () => renderLeaderboard(ch, () => renderChallenge());
 
     // A "Saved…" confirmation shouldn't linger once the athlete moves on to editing or removing something
     const clearFlash = () => { const f = $('chFlash'); if (f) f.remove(); };
