@@ -1638,9 +1638,17 @@
     if (error) throw error;
     return data || [];
   }
+  // Newest first: later date first; on the same date, whichever was logged most recently first.
+  function newestFirst(a, b) {
+    if (a.entry_date !== b.entry_date) return a.entry_date < b.entry_date ? 1 : -1;
+    if (a.created_at !== b.created_at) return (a.created_at || '') < (b.created_at || '') ? 1 : -1;
+    return (b.id || 0) - (a.id || 0);
+  }
   async function fetchChallengeTotal(challengeId) {
+    // Explicitly MINE: organizers are allowed to read everyone's entries, so without this an
+    // organizer's own total would add up the whole gym.
     const { data } = await sb.from('challenge_entries').select('value')
-      .eq('challenge_id', challengeId).eq('status', 'accepted');
+      .eq('challenge_id', challengeId).eq('user_id', state.session.user.id).eq('status', 'accepted');
     return (data || []).reduce((sum, r) => sum + (r.value || 0), 0);
   }
   async function loadChallengeState() {
@@ -1829,9 +1837,12 @@
     const profile = (profRows && profRows[0]) || null;
     if (!profile || profile.show_name == null) { renderChallengeName(profile); return; }
 
+    // Only MY entries (organizers can read everyone's), newest first: by date, then by when it was logged.
     const { data: entryRows, error: eErr } = await sb.from('challenge_entries').select('*')
       .eq('challenge_id', ch.id)
-      .order('entry_date', { ascending: false });
+      .eq('user_id', uid)
+      .order('entry_date', { ascending: false })
+      .order('created_at', { ascending: false });
     if (eErr) { root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(eErr.message)}</div>`; wireTopBar(() => goHome()); return; }
     let entries = entryRows || [];
     let editingId = null;
@@ -1938,7 +1949,7 @@
         if (error) { showError(error.message); return; }
         showError(''); clearFlash();
         Object.assign(entries.find(x => x.id === editingId), patch);
-        entries.sort((a, b) => (a.entry_date < b.entry_date ? 1 : a.entry_date > b.entry_date ? -1 : 0));
+        entries.sort(newestFirst);
         editingId = null; drawEntries(); updateTotal();
       };
       el.querySelectorAll('[data-del]').forEach(b => {

@@ -187,7 +187,8 @@
     const { data, error } = await sb.from('challenge_entries')
       .select('*, profiles(display_name, email)')
       .eq('challenge_id', current.id)
-      .order('entry_date', { ascending: false });
+      .order('entry_date', { ascending: false })
+      .order('created_at', { ascending: false });
     if (error) throw error;
     entries = data || [];
   }
