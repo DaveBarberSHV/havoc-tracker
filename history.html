@@ -516,6 +516,47 @@
     });
   }
 
+  // ======================= TOTALS =======================
+  // A total is three max lifts done in the SAME session and added together, e.g. 315 + 225 + 435 = 975.
+  // Within a session each lift counts at the heaviest weight lifted. A session is one workout block; lifts
+  // entered by hand count as one session when they share a date.
+  const TOTAL_DEFS = [
+    { name: 'Power Total',    keys: ['backsquat', 'benchpress', 'deadlift'],  labels: ['Back Squat', 'Bench Press', 'Deadlift'] },
+    { name: 'CrossFit Total', keys: ['backsquat', 'strictpress', 'deadlift'], labels: ['Back Squat', 'Strict Press', 'Deadlift'] },
+  ];
+  const TOTAL_LIFT_KEYS = new Set(TOTAL_DEFS.flatMap(d => d.keys));
+  // Spelling-insensitive identity, so "Shoulder Press" is the Strict Press and "Deadlifts" is the Deadlift
+  function liftKey(name) {
+    const words = (String(name || '').toLowerCase().replace(/&/g, ' and ').match(/[a-z0-9]+/g) || []).map(w =>
+      w.endsWith('sses') ? w.slice(0, -2) : (w.length > 2 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w));
+    const k = words.join('');
+    return (k === 'shoulderpress' || k === 'strictshoulderpress') ? 'strictpress' : k;
+  }
+  // rows: [{ session, name, weight, at }]  ->  one entry per session that contains all three lifts of a total
+  function totalsFromRows(rows) {
+    const bySession = {};
+    rows.forEach(r => {
+      const w = Number(r.weight);
+      if (!w) return;
+      const s = (bySession[r.session] = bySession[r.session] || { lifts: {}, at: r.at });
+      const k = liftKey(r.name);
+      if (!s.lifts[k] || w > s.lifts[k]) s.lifts[k] = w;
+      if (r.at > s.at) s.at = r.at;
+    });
+    const out = [];
+    Object.entries(bySession).forEach(([session, s]) => {
+      TOTAL_DEFS.forEach(def => {
+        if (def.keys.every(k => s.lifts[k])) {
+          const parts = def.keys.map((k, i) => ({ label: def.labels[i], weight: s.lifts[k] }));
+          out.push({ type: def.name, session, at: s.at, total: parts.reduce((sum, p) => sum + p.weight, 0), parts });
+        }
+      });
+    });
+    return out;
+  }
+  const localDay = (iso) => { const d = new Date(iso); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const totalSessionKey = (r) => (r.segment_id != null ? String(r.segment_id) : `manual-${localDay(r.logged_at)}`);
+
   // ======================= PERSONAL RECORDS =======================
   // One list of every lift's records. Actual 1RM (a true single you really did)
   // is shown as the headline; an estimate is shown beneath, clearly labeled,
@@ -525,7 +566,7 @@
     wireTopBar(() => renderMovementPicker());
 
     const { data, error } = await sb
-      .from('strength_results').select('movement_id, reps_completed, weight_lbs, logged_at, movements(id, name)');
+      .from('strength_results').select('segment_id, movement_id, reps_completed, weight_lbs, logged_at, movements(id, name)');
     if (error) {
       root.innerHTML = `${topBarHtml(true)}<div class="error-banner">${esc(error.message)}</div>`;
       wireTopBar(() => renderMovementPicker());
@@ -553,6 +594,19 @@
       }
     });
 
+    // Best Power Total / CrossFit Total: lifts done in the SAME session, added together
+    const allTotals = totalsFromRows((data || []).filter(r => r.movements && r.weight_lbs)
+      .map(r => ({ session: totalSessionKey(r), name: r.movements.name, weight: r.weight_lbs, at: r.logged_at })));
+    const totalRows = TOTAL_DEFS.map(def => {
+      const mine = allTotals.filter(t => t.type === def.name);
+      if (!mine.length) return '';
+      const best = mine.reduce((b, t) => (t.total > b.total ? t : b));
+      return `<div class="pr-row"><div class="pr-name">${esc(def.name)}</div>
+        <div class="pr-vals"><div class="pr-main">${best.total} lb</div>
+          <div class="pr-sub">${best.parts.map(p => p.weight).join(' + ')} · ${fmtDate(best.at)}</div>
+          <div class="pr-sub">${best.parts.map(p => esc(p.label)).join(' · ')}${mine.length > 1 ? ` · best of ${mine.length}` : ''}</div></div></div>`;
+    }).join('');
+
     const all = Object.values(byMovement).sort((a, b) => a.name.localeCompare(b.name));
     const loaded = all.filter(m => !isRepMaxMovement(m.name) && (m.actual !== null || m.calc !== null));
     const bodyweight = all.filter(m => isRepMaxMovement(m.name) && m.bestReps > 0);
@@ -579,9 +633,10 @@
         <span class="mv-name">+ Enter a past PR</span>
         <span class="mv-count" style="color:var(--chalk);">→</span>
       </button>
+      ${totalRows ? `<div class="section-label">Totals</div>${totalRows}` : ''}
       ${loadedRows ? `<div class="section-label">Lifts</div>${loadedRows}` : ''}
       ${bodyweightRows ? `<div class="section-label">Best reps</div>${bodyweightRows}` : ''}
-      ${!loadedRows && !bodyweightRows ? `<div class="center-msg" style="margin-top:20px;">No records yet. Enter one above, or log a workout.</div>` : ''}
+      ${!loadedRows && !bodyweightRows && !totalRows ? `<div class="center-msg" style="margin-top:20px;">No records yet. Enter one above, or log a workout.</div>` : ''}
     `;
     wireTopBar(() => renderMovementPicker());
     document.getElementById('addPrBtn').onclick = () => renderPrEntry();

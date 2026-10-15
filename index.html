@@ -228,6 +228,12 @@
   .radio-label { color: var(--chalk-dim); font-size: 17px; margin-bottom: 4px; }
   .radio-row { display: flex; align-items: center; gap: 10px; font-size: 20px; padding: 8px 0; cursor: pointer; }
   .radio-row input { width: 22px; height: 22px; flex-shrink: 0; }
+  .total-card { background: var(--panel); border: 2px solid var(--accent); border-radius: var(--radius); padding: 14px 16px; margin: 14px 0; }
+  .total-top { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .total-name { color: var(--chalk-dim); font-size: 19px; letter-spacing: 0.04em; text-transform: uppercase; }
+  .total-badge { background: var(--accent); color: var(--chalk); font-size: 17px; font-weight: 700; padding: 3px 12px 4px; border-radius: 999px; }
+  .total-value { font-family: 'JetBrains Mono', monospace; font-size: 42px; font-weight: 700; line-height: 1.1; margin-top: 2px; }
+  .total-parts { color: var(--chalk-dim); font-size: 19px; margin-top: 2px; }
   .home-label { color: var(--chalk-dim); font-size: 18px; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 2px; }
   .home-date { font-size: 36px; font-weight: 700; line-height: 1.1; margin: 0 0 8px; }
   .home-note { color: var(--chalk-dim); font-size: 20px; margin-bottom: 10px; }
@@ -308,6 +314,7 @@
     error: null,
     view: 'home',      // 'home' (the landing screen) or 'entry' (logging a workout)
     anyLogged: false,  // does the loaded workout have ANY results yet? (fresh vs. partly logged)
+    dayTotals: [],     // Power Total / CrossFit Total for the loaded day, when it is a total day
     loading: true,     // true until the first workout load finishes, so we don't flash an empty home
     onEntryDone: null, // where to go when a one-off entry finishes (e.g. back to Day Review)
     challenge: null,       // the challenge running right now, if any
@@ -503,7 +510,7 @@
       .from('workouts').select('*').lte('workout_date', dateStr)
       .order('workout_date', { ascending: false }).limit(1);
     if (wErr) { state.error = wErr.message; return; }
-    if (!workouts || workouts.length === 0) { state.workout = null; state.tasks = []; state.anyLogged = false; return; }
+    if (!workouts || workouts.length === 0) { state.workout = null; state.tasks = []; state.anyLogged = false; state.dayTotals = []; return; }
     state.workout = workouts[0];
 
     const { data: segments, error: sErr } = await sb
@@ -567,6 +574,8 @@
     state.taskIndex = resumeIndex;
     state.setNumber = resumeSetNumber;
     state.anyLogged = loggedWodSegIds.size > 0 || Object.keys(strengthMaxSet).length > 0;
+    state.dayTotals = [];
+    try { state.dayTotals = await loadDayTotals(tasks); } catch (e) { /* a total is a bonus; it must never block the day */ }
   }
 
   async function loadMovementHistory(movementId, movementName) {
@@ -905,6 +914,15 @@
       wodBlocks.push({ segment: seg, result: (results && results[0]) || null, movements: wodMovs || [] });
     }
 
+    // Power Total / CrossFit Total for this day, from the sets currently shown, compared with other days
+    let otherTotals = [];
+    try { otherTotals = await loadOtherTotals(new Set(movementBlocks.map(b => String(b.segment.id)))); } catch (e) { /* optional */ }
+    function reviewTotals() {
+      const rows = [];
+      movementBlocks.forEach(b => b.sets.forEach(x => rows.push({ session: String(b.segment.id), name: b.movement.name, weight: x.weight_lbs, at: x.logged_at })));
+      return withPrFlags(totalsFromRows(rows), otherTotals);
+    }
+
     let editingKey = null;   // e.g. "movementId_3" for a set, or "wod_<segmentId>"
     let addingSetFor = null; // movementId currently showing an add-set form
 
@@ -915,6 +933,7 @@
         <div class="scheme" style="margin-bottom:18px;">${esc(workout.source_title || '')}</div>
       `;
       if (state.error) html += `<div class="error-banner">${esc(state.error)}</div>`;
+      html += reviewTotals().map(totalCardHtml).join('');
 
       movementBlocks.forEach(block => {
         const isBW = isBodyweightMovement(block.movement.name);
@@ -2026,6 +2045,88 @@
     };
   }
 
+  // ======================= TOTALS (Power Total, CrossFit Total) =======================
+  // A total is three max lifts done in the SAME session and added together, e.g. 315 + 225 + 435 = 975.
+  // Within a session each lift counts at the heaviest weight lifted. A session is one workout block; lifts
+  // entered by hand count as one session when they share a date.
+  const TOTAL_DEFS = [
+    { name: 'Power Total',    keys: ['backsquat', 'benchpress', 'deadlift'],  labels: ['Back Squat', 'Bench Press', 'Deadlift'] },
+    { name: 'CrossFit Total', keys: ['backsquat', 'strictpress', 'deadlift'], labels: ['Back Squat', 'Strict Press', 'Deadlift'] },
+  ];
+  const TOTAL_LIFT_KEYS = new Set(TOTAL_DEFS.flatMap(d => d.keys));
+  // Spelling-insensitive identity, so "Shoulder Press" is the Strict Press and "Deadlifts" is the Deadlift
+  function liftKey(name) {
+    const words = (String(name || '').toLowerCase().replace(/&/g, ' and ').match(/[a-z0-9]+/g) || []).map(w =>
+      w.endsWith('sses') ? w.slice(0, -2) : (w.length > 2 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w));
+    const k = words.join('');
+    return (k === 'shoulderpress' || k === 'strictshoulderpress') ? 'strictpress' : k;
+  }
+  // rows: [{ session, name, weight, at }]  ->  one entry per session that contains all three lifts of a total
+  function totalsFromRows(rows) {
+    const bySession = {};
+    rows.forEach(r => {
+      const w = Number(r.weight);
+      if (!w) return;
+      const s = (bySession[r.session] = bySession[r.session] || { lifts: {}, at: r.at });
+      const k = liftKey(r.name);
+      if (!s.lifts[k] || w > s.lifts[k]) s.lifts[k] = w;
+      if (r.at > s.at) s.at = r.at;
+    });
+    const out = [];
+    Object.entries(bySession).forEach(([session, s]) => {
+      TOTAL_DEFS.forEach(def => {
+        if (def.keys.every(k => s.lifts[k])) {
+          const parts = def.keys.map((k, i) => ({ label: def.labels[i], weight: s.lifts[k] }));
+          out.push({ type: def.name, session, at: s.at, total: parts.reduce((sum, p) => sum + p.weight, 0), parts });
+        }
+      });
+    });
+    return out;
+  }
+  const sessionKeyFor = (r) => (r.segment_id != null ? String(r.segment_id) : `manual-${localDateStr(new Date(r.logged_at))}`);
+  // Every total from sessions OTHER than the ones given (to see whether a total is a new best)
+  async function loadOtherTotals(excludeSessions) {
+    const { data: mv } = await sb.from('movements').select('id, name');
+    const lifts = (mv || []).filter(m => TOTAL_LIFT_KEYS.has(liftKey(m.name)));
+    if (!lifts.length) return [];
+    const nameById = Object.fromEntries(lifts.map(m => [m.id, m.name]));
+    const { data: rows } = await sb.from('strength_results').select('segment_id, movement_id, weight_lbs, logged_at')
+      .eq('user_id', state.session.user.id).in('movement_id', lifts.map(m => m.id));
+    return totalsFromRows((rows || []).map(r => ({ session: sessionKeyFor(r), name: nameById[r.movement_id], weight: r.weight_lbs, at: r.logged_at })))
+      .filter(t => !excludeSessions.has(t.session));
+  }
+  function withPrFlags(todays, others) {
+    return todays.map(t => {
+      const prior = others.filter(o => o.type === t.type);
+      const best = prior.reduce((m, o) => Math.max(m, o.total), 0);
+      return { ...t, first: prior.length === 0, isPR: prior.length > 0 && t.total > best };
+    });
+  }
+  // Today's totals, if today's workout contains a total block (all three lifts programmed in one block)
+  async function loadDayTotals(tasks) {
+    const keysBySeg = {};
+    tasks.filter(t => t.type === 'strength').forEach(t => {
+      (keysBySeg[t.segment.id] = keysBySeg[t.segment.id] || new Set()).add(liftKey(t.movement.name));
+    });
+    const candidates = Object.keys(keysBySeg).filter(id => TOTAL_DEFS.some(d => d.keys.every(k => keysBySeg[id].has(k))));
+    if (!candidates.length) return [];
+    const nameById = {};
+    tasks.filter(t => t.type === 'strength').forEach(t => { nameById[t.movement.id] = t.movement.name; });
+    const { data: rows } = await sb.from('strength_results').select('segment_id, movement_id, weight_lbs, logged_at')
+      .eq('user_id', state.session.user.id).in('segment_id', candidates.map(Number));
+    const todays = totalsFromRows((rows || []).map(r => ({ session: String(r.segment_id), name: nameById[r.movement_id], weight: r.weight_lbs, at: r.logged_at })));
+    if (!todays.length) return [];
+    return withPrFlags(todays, await loadOtherTotals(new Set(candidates)));
+  }
+  function totalCardHtml(t) {
+    const badge = t.first ? '🏆 First total recorded' : t.isPR ? '🏆 New Total PR' : '';
+    return `<div class="total-card">
+      <div class="total-top"><span class="total-name">${esc(t.type)}</span>${badge ? `<span class="total-badge">${badge}</span>` : ''}</div>
+      <div class="total-value">${t.total} lb</div>
+      <div class="total-parts">${t.parts.map(p => `${esc(p.label)} ${p.weight}`).join(' + ')}</div>
+    </div>`;
+  }
+
   // ======================= HOME =======================
   // The landing screen: the day's workout, with one clear button to log it.
   // The button reflects where you are: nothing logged yet, partly logged, or finished.
@@ -2066,6 +2167,7 @@
       <div class="home-date">${esc(fmtFullDate(w.workout_date))}</div>
       ${isToday ? '' : `<div class="home-note">No class workout posted for today.</div>`}
       ${statusLine ? `<div class="home-status">${statusLine}</div>` : ''}
+      ${(state.dayTotals || []).map(totalCardHtml).join('')}
       ${label ? `<button class="log-btn" id="homePrimaryBtn" type="button" style="margin-top:6px;">${label}</button>` : ''}
       ${challengeHomeHtml()}
       ${isToday ? '' : `<button class="secondary-btn" id="homeCustomBtn" type="button">Log a Custom Workout</button>`}

@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 15, 2026
+Last updated: Oct 17, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -28,6 +28,8 @@ considered. Add new ideas under the closest heading as they come up.
 - [x] Complexes are ONE movement scored by the heaviest weight (a plain PR, no 1RM or estimate). "Havocomplex Snatch" and "Havocomplex Clean" are recognized by name, and the nightly job merges them back if the parser ever splits one into its component lifts
 - [x] Every lift, skill, row/run test and benchmark name from the gym's record board is recognized (movements seeded; benchmark names like Fran, Fight Gone Bad, Filthy Fifty, King Kong are passed to the parser). No leaderboard in the app, by choice
 - [x] The nightly job matches movements regardless of spelling ("Pull-ups" / "Pull-up"), so variants reuse the existing record instead of creating duplicates
+- [x] The first split Havocomplex Snatch day was repaired by SQL, and the PR recorded correctly
+- [x] Power Total (Back Squat + Bench Press + Deadlift) and CrossFit Total (Back Squat + Strict Press + Deadlift): three lifts done in the SAME session and added together. The total shows on the day (home screen and Day Review, with "First total recorded" / "New Total PR") and the best one is on the Personal Records page. Hand-entered lifts count as one session when they share a date. The nightly job records a total as its three lifts, and "Shoulder Press" is recognized as the Strict Press
 - [x] Home screen: shows the full workout with one button that adapts (Log Today's WOD Results / Continue Logging WOD Results / Review / Edit WOD Results)
 
 **Records and history**
@@ -47,9 +49,8 @@ considered. Add new ideas under the closest heading as they come up.
 ## Open
 
 ### Verify soon
-- [ ] **Repair the Havocomplex Snatch day** (it was parsed as three lifts before this fix). Run look_at_today.sql, send the results, then run the cleanup I prepare. The nightly job won't re-parse a day that's already loaded, by design.
-- [ ] Confirm what "20 Rep Total", "Power Total" and "CrossFit Total" are made of (treated as totals of other lifts, not movements, for now)
-- [ ] Confirm the first real Havocomplex day after this change comes through as one movement
+- [ ] Confirm the first real Havocomplex day after the fix comes through as one movement with no manual repair (the first one was repaired by hand)
+- [ ] Run check_movements.sql to see whether the database already holds duplicate movements (for example "Shoulder Press" next to "Strict Press"), then merge any that exist with a safe SQL fix
 - [ ] **Check the first new workout after the latest deploy.** The WOD description and
       benchmark name come from Claude's reading of the post and couldn't be tested live.
       Confirm the description looks right on that day's WOD screen.
@@ -86,6 +87,11 @@ Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and i
 - [ ] When ready, insert the real Nov 8-21 challenge (the SQL is commented at the bottom of the migration)
 - [ ] After the challenge: export the CSV, then delete the photos
 - [ ] Optional later: AI cross-check of the photo against the typed number, flagging mismatches (about $2 for ~700 photos; needs a small server-side function)
+
+### Ideas to decide
+- [ ] **Estimated 1RM from very high-rep sets.** The Epley formula is only reliable up to about 10 reps, so a set of 15 or 20 gives a nonsense estimate and could trigger an "est. 1RM high" badge. Option: ignore sets over 10 reps when estimating.
+- [ ] **20 Rep Total**: its definition is unclear (the board's weights don't look like one set of 20 back squats). Deliberately NOT interpreted by the app or the nightly job until it's confirmed
+- [ ] Zercher Squat: an unlabeled box on the record board. Nothing to do; it is created automatically if a post uses it
 
 ### Entry app
 - [ ] **Editable reps** for strength sets. Currently locked to the number in the prescribed

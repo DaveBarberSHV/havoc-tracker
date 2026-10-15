@@ -80,6 +80,12 @@ Rules:
 - CrossFit Havoc has two complexes of its own: "Havocomplex Snatch" and "Havocomplex Clean" (spelled exactly that way).
   Each is ONE movement named exactly that. Its score is the heaviest weight lifted for the whole
   complex without dropping the bar. Never split either one into its component lifts.
+- A TOTAL is three separate max lifts done in the same session and ADDED TOGETHER into one number (for
+  example 315 + 225 + 435 = 975). It is not a complex: each lift is its own barbell weight, so record a
+  total as its three lifts, each its own strength movement with prescribed_reps "1" (one best attempt).
+  Never create a movement named "Total"; the app adds the lifts up itself. The gym's totals:
+  "CrossFit Total" = Back Squat + Strict Press + Deadlift; "Power Total" = Back Squat + Bench Press +
+  Deadlift. The press in the CrossFit Total ("Shoulder Press") is the Strict Press.
 - The gym tracks these lifts and tests. When a movement is one of them, use exactly this name:
   {known_movements}
 - The gym also keeps records for these named workouts. When the post names one, set wod_name to exactly
@@ -127,7 +133,9 @@ def movement_key(name: str) -> str:
     text = (name or "").lower().replace("&", " and ")
     parts = []
     for tok in re.findall(r"[a-z0-9]+", text):
-        if len(tok) > 2 and tok.endswith("s") and not tok.endswith("ss"):
+        if tok.endswith("sses"):                       # "presses" -> "press"
+            tok = tok[:-2]
+        elif len(tok) > 2 and tok.endswith("s") and not tok.endswith("ss"):
             tok = tok[:-1]
         parts.append(tok)
     return "".join(parts)
@@ -138,6 +146,8 @@ _CANON_MOVEMENT.update({
     "havoccomplexsnatch": "Havocomplex Snatch", "havcomplexsnatch": "Havocomplex Snatch",
     "havoccomplexclean": "Havocomplex Clean", "havcomplexclean": "Havocomplex Clean",
     "tgu": "Turkish Get-up", "turkishgetup": "Turkish Get-up",
+    # the gym calls the strict press the "Shoulder Press" in the CrossFit Total
+    "shoulderpress": "Strict Press", "strictshoulderpress": "Strict Press",
 })
 _CANON_BENCHMARK = {movement_key(n): n for n in KNOWN_BENCHMARKS}
 
@@ -214,12 +224,49 @@ def collapse_complexes(parsed: dict) -> dict:
     return parsed
 
 
+# A TOTAL is three separate max lifts added together. It is not a movement of its own (and not a complex).
+_TOTALS = {
+    "crossfittotal": (["Back Squat", "Strict Press", "Deadlift"], "1"),
+    "powertotal": (["Back Squat", "Bench Press", "Deadlift"], "1"),
+}
+
+
+def expand_totals(parsed: dict) -> dict:
+    """If the parser recorded a total (e.g. 'CrossFit Total') as if it were a lift, replace it with
+    the lifts it is made of, so each lift gets its own weight and its own PR."""
+    for seg in parsed.get("segments", []):
+        movs = seg.get("movements") or []
+        title_key = movement_key(seg.get("title") or "")
+        has_total = any(movement_key(m.get("name", "")) in _TOTALS for m in movs)
+        if not has_total and not (not movs and title_key in _TOTALS and seg.get("segment_type") in ("strength", "other")):
+            continue
+        keep = [m for m in movs if movement_key(m.get("name", "")) not in _TOTALS]
+        total_keys = [movement_key(m.get("name", "")) for m in movs if movement_key(m.get("name", "")) in _TOTALS] or [title_key]
+        have = {movement_key(m.get("name", "")) for m in keep}
+        sets = next((m.get("prescribed_sets") for m in movs if isinstance(m.get("prescribed_sets"), int)), None)
+        for tk in total_keys:
+            lifts, reps = _TOTALS[tk]
+            for name in lifts:
+                if movement_key(name) in have:
+                    continue
+                keep.append({"name": name, "movement_order": 0, "prescribed_reps": reps, "prescribed_sets": sets,
+                             "prescribed_scheme": None})
+                have.add(movement_key(name))
+        for i, m in enumerate(keep, 1):
+            m["movement_order"] = i
+        seg["movements"] = keep
+        seg["segment_type"] = "strength"
+        seg["score_type"] = "load"
+    return parsed
+
+
 def normalize_parsed(parsed: dict) -> dict:
     """Applied to every parse: Havocomplex stays whole, benchmark and movement names use the gym's spelling."""
     for seg in parsed.get("segments", []):
         if seg.get("wod_name"):
             seg["wod_name"] = canonical_benchmark(seg["wod_name"])
     collapse_complexes(parsed)
+    expand_totals(parsed)
     for seg in parsed.get("segments", []):
         for mv in seg.get("movements") or []:
             mv["name"] = canonical_movement_name(mv.get("name", ""))
