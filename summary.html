@@ -92,6 +92,10 @@
   const root = document.getElementById('root');
 
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+  // A complex ("Havocomplex Snatch", "Power Snatch + Overhead Squat") is scored by its heaviest weight: a plain PR.
+  function isComplexMovement(name) {
+    return /hav(?:oc)?\s*-?\s*c?omplex/i.test(name || '') || /\s\+\s/.test(name || '');
+  }
   function epley(weight, reps) {
     // A true 1-rep set IS the 1RM already — nothing to estimate. Only
     // extrapolate for multi-rep sets, where the formula actually applies.
@@ -202,13 +206,15 @@
         if (error) continue;
         // Two separate records: actual 1RM (true singles) and calculated (multi-rep estimates).
         // They're judged independently so a real lift is never overshadowed by an estimate.
+        const name = movementNameById[movId] || 'Movement';
+        const complex = isComplexMovement(name);
         let priorActual = null, priorCalc = null;
         let weekActualRow = null, weekCalcRow = null, weekCalcVal = null;
         for (const row of allRows) {
           const rowDate = isoDate(new Date(row.logged_at)); // the date it was lifted where you are, not the UTC date
           const inWeek = rowDate >= weekDates[0] && rowDate <= weekDates[4];
           const isPrior = rowDate < weekDates[0];
-          if (row.reps_completed === 1) {
+          if (complex || row.reps_completed === 1) {   // a complex's record is its heaviest weight
             if (inWeek) {
               if (!weekActualRow || row.weight_lbs > weekActualRow.weight_lbs) weekActualRow = row;
             } else if (isPrior) {
@@ -223,9 +229,8 @@
             }
           }
         }
-        const name = movementNameById[movId] || 'Movement';
         if (weekActualRow && (priorActual === null || weekActualRow.weight_lbs > priorActual)) {
-          prList.push({ kind: 'actual', first: priorActual === null, name, row: weekActualRow });
+          prList.push({ kind: 'actual', first: priorActual === null, complex, name, row: weekActualRow });
         }
         // A calculated high has to beat everything known — actual or calculated
         const priorKnown = Math.max(priorCalc || 0, priorActual || 0);
@@ -273,8 +278,10 @@
         prList.sort((a, b) => (a.kind === 'actual' ? 0 : 1) - (b.kind === 'actual' ? 0 : 1));
         prList.forEach(pr => {
           if (pr.kind === 'actual') {
-            html += `<div class="pr-card">🏆 ${esc(pr.name)} — ${pr.first ? 'first recorded 1RM' : '1RM PR'}
-              <span class="sub">${pr.row.weight_lbs} lb · 1 rep (actual)</span></div>`;
+            const label = pr.complex ? (pr.first ? 'first recorded PR' : 'PR') : (pr.first ? 'first recorded 1RM' : '1RM PR');
+            const detail = pr.complex ? `${pr.row.weight_lbs} lb` : `${pr.row.weight_lbs} lb · 1 rep (actual)`;
+            html += `<div class="pr-card">🏆 ${esc(pr.name)} — ${label}
+              <span class="sub">${detail}</span></div>`;
           } else {
             html += `<div class="pr-card est">📈 ${esc(pr.name)} — est. 1RM high
               <span class="sub">${Math.round(pr.est)} lb calculated from ${pr.row.reps_completed} reps @ ${pr.row.weight_lbs} lb</span></div>`;

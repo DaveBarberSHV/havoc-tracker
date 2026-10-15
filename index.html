@@ -367,6 +367,7 @@
     /toes.?to.?bar|t2b/i, /knees.?to.?elbows?|k2e/i, /muscle.?up/i,
     /ring.?dip/i, /\bdip\b/i, /jumping.?jack/i, /double.?under/i, /single.?under/i,
     /rope.?climb/i, /ghd/i,
+    /handstand.?walk/i, /long.?jump/i,   // scored in reps/feet, never pounds
   ];
   // Some bodyweight-pattern names (lunges, step-ups) can also appear as a loaded
   // variant (e.g. "Weighted Lunges", "Dumbbell Step Ups"). If the name explicitly
@@ -386,8 +387,16 @@
   const CARDIO_PATTERNS = [
     /\bbike(\s*erg)?\b/i,
     /\bski(\s*erg)?\b/i,
-    /^\s*(calorie\s+|cal\s+|meter\s+)?(row|rower|rowing|run|running|jog|jogging|swim|swimming)(\s+erg)?\s*$/i,
+    // "Row", "Calorie Row", and distance tests like "500 Meter Row", "2000m Row", "400 Meter Run", "5k Run".
+    // Anchored, so "Bent Over Row" and "Ring Row" are never mistaken for the rower.
+    /^\s*(\d+(\.\d+)?\s*(m|meter|meters|metre|metres|k|km|mi|mile|miles)?\s+)?(calorie\s+|cal\s+)?(row|rower|rowing|run|running|jog|jogging|swim|swimming)(\s+erg)?\s*$/i,
   ];
+  // A complex (several lifts done back to back without dropping the bar, e.g. "Havocomplex Snatch" or
+  // "Power Snatch + Overhead Squat") is scored as ONE weight: the heaviest you completed. That makes
+  // it a PR by weight, with no "1RM" and no estimate.
+  function isComplexMovement(name) {
+    return /hav(?:oc)?\s*-?\s*c?omplex/i.test(name || '') || /\s\+\s/.test(name || '');
+  }
   function isCardioMovement(name) {
     return CARDIO_PATTERNS.some((p) => p.test(name));
   }
@@ -560,7 +569,7 @@
     state.anyLogged = loggedWodSegIds.size > 0 || Object.keys(strengthMaxSet).length > 0;
   }
 
-  async function loadMovementHistory(movementId) {
+  async function loadMovementHistory(movementId, movementName) {
     const { data, error } = await sb
       .from('strength_results').select('reps_completed, weight_lbs, logged_at')
       .eq('movement_id', movementId)
@@ -575,7 +584,12 @@
     const { data: allRows } = await sb
       .from('strength_results').select('reps_completed, weight_lbs')
       .eq('movement_id', movementId).not('reps_completed', 'is', null);
+    const complex = isComplexMovement(movementName);
     for (const row of (allRows || [])) {
+      if (complex) {   // a complex's record is simply its heaviest weight, whatever the rep count
+        if (row.weight_lbs && (bestActual === null || row.weight_lbs > bestActual)) bestActual = row.weight_lbs;
+        continue;
+      }
       if (row.reps_completed && (bestReps === null || row.reps_completed > bestReps)) {
         bestReps = row.reps_completed;
       }
@@ -1320,7 +1334,8 @@
     const prescribedReps = parseLeadingInt(task.segMovement.prescribed_reps) || null;
     const isBodyweight = isBodyweightMovement(task.movement.name);
     const STEP = isBodyweight ? 1 : 5;
-    const { recent, bestActual, bestCalc, bestReps } = await loadMovementHistory(task.movement.id);
+    const isComplex = isComplexMovement(task.movement.name);
+    const { recent, bestActual, bestCalc, bestReps } = await loadMovementHistory(task.movement.id, task.movement.name);
     const isSingle = prescribedReps === 1; // a true 1-rep attempt, i.e. a 1RM test
 
     let weight = recent.length
@@ -1374,6 +1389,13 @@
           isPR = known > 0 && estToday > known;
           prBadgeText = '📈 New est. 1RM high';
           prIsEst = true;
+        }
+        if (isComplex) {
+          // A complex is scored by its heaviest weight: show it as a PR, never as a 1RM or an estimate
+          contextLine2 = bestActual !== null ? `PR ${Math.round(bestActual)} lb` : `PR: none logged`;
+          isPR = weight > 0 && (bestActual === null || weight > bestActual);
+          prBadgeText = bestActual === null ? '🏆 First PR recorded' : '🏆 New PR';
+          prIsEst = false;
         }
         priorRows = recent.map(r =>
           `<div class="prior-row"><span class="date">${fmtDate(r.logged_at)}</span><span class="val">${r.reps_completed ?? '?'} reps @ ${r.weight_lbs ?? '?'} lb</span></div>`
@@ -1504,7 +1526,7 @@
       document.getElementById('logBtn').onclick = async () => {
         document.getElementById('logBtn').disabled = true;
         const noteVal = document.getElementById('notesInput').value.trim() || null;
-        const repsToLog = isBodyweight ? weight : prescribedReps;
+        const repsToLog = isBodyweight ? weight : (prescribedReps || (isComplex ? 1 : null));  // a complex is always one pass
         let weightToLog = isBodyweight ? null : weight;
         if (isBodyweight && showExtraWeight) {
           const extraInput = document.getElementById('extraWeightInput');

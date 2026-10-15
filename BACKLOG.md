@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 8, 2026
+Last updated: Oct 15, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -25,6 +25,9 @@ considered. Add new ideas under the closest heading as they come up.
 - [x] Custom workouts for days the gym doesn't post (Hyrox, Zone 2, conditioning, other)
 - [x] Hamburger menu on every page, with a back arrow only where there's somewhere to go back to
 - [x] WOD details: written description, benchmark name, and the full post as published
+- [x] Complexes are ONE movement scored by the heaviest weight (a plain PR, no 1RM or estimate). "Havocomplex Snatch" and "Havocomplex Clean" are recognized by name, and the nightly job merges them back if the parser ever splits one into its component lifts
+- [x] Every lift, skill, row/run test and benchmark name from the gym's record board is recognized (movements seeded; benchmark names like Fran, Fight Gone Bad, Filthy Fifty, King Kong are passed to the parser). No leaderboard in the app, by choice
+- [x] The nightly job matches movements regardless of spelling ("Pull-ups" / "Pull-up"), so variants reuse the existing record instead of creating duplicates
 - [x] Home screen: shows the full workout with one button that adapts (Log Today's WOD Results / Continue Logging WOD Results / Review / Edit WOD Results)
 
 **Records and history**
@@ -44,6 +47,9 @@ considered. Add new ideas under the closest heading as they come up.
 ## Open
 
 ### Verify soon
+- [ ] **Repair the Havocomplex Snatch day** (it was parsed as three lifts before this fix). Run look_at_today.sql, send the results, then run the cleanup I prepare. The nightly job won't re-parse a day that's already loaded, by design.
+- [ ] Confirm what "20 Rep Total", "Power Total" and "CrossFit Total" are made of (treated as totals of other lifts, not movements, for now)
+- [ ] Confirm the first real Havocomplex day after this change comes through as one movement
 - [ ] **Check the first new workout after the latest deploy.** The WOD description and
       benchmark name come from Claude's reading of the post and couldn't be tested live.
       Confirm the description looks right on that day's WOD screen.
@@ -119,6 +125,7 @@ Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and i
 
 ## Things worth remembering
 
+- **Corrections to an already-loaded day's structure are done by SQL, not by re-running the job.** The job leaves a loaded day alone so it can never erase people's results.
 - **Never run the nightly job with --force on a day people have logged.** It rebuilds the day's
   workout and erases everyone's results for it. Same for the backfill script's --force.
 - **Supabase free tier allows 2 projects per person, across all organizations.** Creating

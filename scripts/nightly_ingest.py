@@ -72,6 +72,18 @@ Rules:
 - Do not invent information not present in the text.
 - "description" must only restate what the post says. Never add movements, loads, or times that are not in the text. Keep the post's own wording for scores/formats (e.g. "For Time", "AMRAP 16").
 - "wod_name" is for named benchmark workouts only. A descriptive title like "AMRAP 16" or "50 Cal Bike" is NOT a name — use null.
+- A COMPLEX is several lifts done back to back as one unit without putting the bar down (for example
+  "Power Snatch + Overhead Squat", or "Hang Snatch Pull + Snatch"). Record a complex as ONE movement,
+  never as separate movements, because it is scored as a single weight. Put the components in
+  prescribed_scheme (for example "1 Hang Power Snatch + 1 Overhead Squat + 1 Snatch Balance"). For a
+  complex that has no name of its own, name the movement with its components joined by " + ".
+- CrossFit Havoc has two complexes of its own: "Havocomplex Snatch" and "Havocomplex Clean" (spelled exactly that way).
+  Each is ONE movement named exactly that. Its score is the heaviest weight lifted for the whole
+  complex without dropping the bar. Never split either one into its component lifts.
+- The gym tracks these lifts and tests. When a movement is one of them, use exactly this name:
+  {known_movements}
+- The gym also keeps records for these named workouts. When the post names one, set wod_name to exactly
+  this spelling: {known_benchmarks}
 
 Here is the workout text to parse:
 
@@ -79,6 +91,164 @@ Here is the workout text to parse:
 {raw_text}
 ---
 """
+
+
+
+# ---------------------------------------------------------------------------
+# Movement and benchmark recognition
+#
+# These are the lifts, skills and tests on the gym's record board, so the app recognizes them
+# whenever they come up. Names are matched by SPELLING-INSENSITIVE identity ("Pull-ups", "pull ups"
+# and "Pull-up" are the same movement), so a variant reuses the existing record instead of creating
+# a duplicate.
+# ---------------------------------------------------------------------------
+KNOWN_MOVEMENTS = [
+    # barbell lifts
+    "Back Squat", "Front Squat", "Overhead Squat", "Strict Press", "Push Press", "Bench Press",
+    "Deadlift", "Thruster", "Power Clean", "Clean", "Clean and Jerk", "Power Clean and Jerk",
+    "Power Snatch", "Snatch", "Snatch Balance", "Turkish Get-up", "Weighted Pull-up",
+    # the gym's own complexes (each is ONE movement)
+    "Havocomplex Clean", "Havocomplex Snatch",
+    # gymnastics and skills
+    "Strict Pull-up", "Kipping Pull-up", "Bar Muscle-up", "Ring Muscle-up",
+    "Strict Handstand Push-up", "Handstand Walk", "Box Jump", "Long Jump", "Double Under",
+    # timed distance tests
+    "100 Meter Row", "500 Meter Row", "1000 Meter Row", "2000 Meter Row", "5000 Meter Row", "400 Meter Run",
+]
+KNOWN_BENCHMARKS = [
+    "Amanda", "Angie", "Annie", "Cindy", "Diane", "Elizabeth", "Fran", "Grace", "Helen", "Isabel",
+    "Jackie", "Karen", "Kelly", "Linda", "Lynne", "Mary", "Nancy", "Murph",
+    "Fight Gone Bad", "Filthy Fifty", "King Kong", "Yo Mama So Crazy", "30 Ring Muscle-ups",
+]
+
+
+def movement_key(name: str) -> str:
+    """Spelling-insensitive identity: 'Pull-ups', 'pull ups' and 'Pull-up' all give 'pullup'."""
+    text = (name or "").lower().replace("&", " and ")
+    parts = []
+    for tok in re.findall(r"[a-z0-9]+", text):
+        if len(tok) > 2 and tok.endswith("s") and not tok.endswith("ss"):
+            tok = tok[:-1]
+        parts.append(tok)
+    return "".join(parts)
+
+
+_CANON_MOVEMENT = {movement_key(n): n for n in KNOWN_MOVEMENTS}
+_CANON_MOVEMENT.update({
+    "havoccomplexsnatch": "Havocomplex Snatch", "havcomplexsnatch": "Havocomplex Snatch",
+    "havoccomplexclean": "Havocomplex Clean", "havcomplexclean": "Havocomplex Clean",
+    "tgu": "Turkish Get-up", "turkishgetup": "Turkish Get-up",
+})
+_CANON_BENCHMARK = {movement_key(n): n for n in KNOWN_BENCHMARKS}
+
+
+def canonical_movement_name(name: str) -> str:
+    """The gym's spelling for a movement it tracks; anything else is left exactly as given."""
+    clean = (name or "").strip()
+    return _CANON_MOVEMENT.get(movement_key(clean), clean)
+
+
+def canonical_benchmark(name):
+    """'fran' -> 'Fran', 'Grace 185' -> 'Grace'. Names the gym doesn't track are left as given."""
+    if not name:
+        return name
+    clean = str(name).strip()
+    hit = _CANON_BENCHMARK.get(movement_key(clean))
+    if hit:
+        return hit
+    # drop a trailing weight such as "Grace - 185" or "Isabel 175 lb"
+    stripped = re.sub(r"[\s\-\u2013:]*\d+\s*(?:lbs?|#|kg)?\s*$", "", clean, flags=re.I)
+    return _CANON_BENCHMARK.get(movement_key(stripped), clean)
+
+
+# "Havocomplex" blends "Havoc" and "Complex" (they share the C), so match it as one word and also
+# the spaced/hyphenated spellings: Havocomplex, Havoc Complex, Havoc-Complex, Havoccomplex, Havcomplex.
+_HAVOCOMPLEX = re.compile(r"hav(?:oc)?\s*-?\s*c?omplex\s*[:\-]?\s*(snatch|clean)?", re.I)
+
+
+def collapse_complexes(parsed: dict) -> dict:
+    """Safety net: a Havocomplex is ONE movement. If the parser split one into its component
+    lifts, merge them back, keeping the components in the scheme text."""
+    for seg in parsed.get("segments", []):
+        if seg.get("segment_type") not in ("strength", "other", "accessory", "skill"):
+            continue
+        movs = seg.get("movements") or []
+        if not movs:
+            continue
+        text = " ".join(str(x) for x in [seg.get("title"), seg.get("description"), seg.get("notes")] if x)
+        text += " " + " ".join(str(m.get("name", "")) + " " + str(m.get("prescribed_scheme") or "") for m in movs)
+        found = _HAVOCOMPLEX.search(text)
+        if not found:
+            continue
+        kind = (found.group(1) or "").title()
+        if not kind:
+            names = " ".join(str(m.get("name", "")).lower() for m in movs)
+            kind = "Snatch" if "snatch" in names else "Clean" if "clean" in names else ""
+        if not kind:
+            continue
+        target = f"Havocomplex {kind}"
+        if len(movs) == 1 and movement_key(movs[0].get("name", "")) == movement_key(target):
+            continue   # already a single, correctly named movement
+        parts = []
+        for m in movs:
+            if movement_key(m.get("name", "")) == movement_key(target):
+                continue
+            reps = str(m.get("prescribed_reps") or "").strip()
+            parts.append(f"{reps} {m.get('name', '')}".strip())
+        schemes = []
+        for m in movs:
+            sc = (m.get("prescribed_scheme") or "").strip()
+            if sc and sc not in schemes and sc not in parts:
+                schemes.append(sc)
+        scheme = " + ".join(parts)
+        if schemes:
+            scheme = (scheme + " — " if scheme else "") + schemes[0]
+        sets = [m.get("prescribed_sets") for m in movs if isinstance(m.get("prescribed_sets"), int)]
+        seg["movements"] = [{
+            "name": target, "movement_order": 1, "prescribed_reps": "1",
+            "prescribed_sets": max(sets) if sets else None,
+            "prescribed_scheme": scheme or None,
+        }]
+        seg["segment_type"] = "strength"
+        seg["score_type"] = "load"
+    return parsed
+
+
+def normalize_parsed(parsed: dict) -> dict:
+    """Applied to every parse: Havocomplex stays whole, benchmark and movement names use the gym's spelling."""
+    for seg in parsed.get("segments", []):
+        if seg.get("wod_name"):
+            seg["wod_name"] = canonical_benchmark(seg["wod_name"])
+    collapse_complexes(parsed)
+    for seg in parsed.get("segments", []):
+        for mv in seg.get("movements") or []:
+            mv["name"] = canonical_movement_name(mv.get("name", ""))
+    return parsed
+
+
+def load_movement_cache(sb) -> dict:
+    """Existing movements, looked up two ways: by exact name, and by spelling-insensitive identity
+    (the oldest record wins if the same movement was ever created twice)."""
+    rows = sb.table("movements").select("id, name").execute().data or []
+    cache = {"exact": {}, "key": {}}
+    for row in sorted(rows, key=lambda r: r["id"]):
+        cache["exact"][row["name"]] = row["id"]
+        cache["key"].setdefault(movement_key(row["name"]), row["id"])
+    return cache
+
+
+def find_or_create_movement(sb, name: str, cache: dict) -> int:
+    """Reuse an existing movement whatever its spelling; otherwise create it under the gym's spelling."""
+    if name in cache["exact"]:
+        return cache["exact"][name]
+    key = movement_key(name)
+    if key in cache["key"]:
+        return cache["key"][key]
+    display = canonical_movement_name(name)
+    created = sb.table("movements").insert({"name": display}).execute()
+    cache["exact"][display] = created.data[0]["id"]
+    cache["key"][key] = created.data[0]["id"]
+    return created.data[0]["id"]
 
 
 def fetch_wod_page() -> str:
@@ -158,14 +328,18 @@ def parse_with_claude(raw_text: str) -> dict:
     msg = client.messages.create(
         model="claude-sonnet-4-6",
         max_tokens=2000,
-        messages=[{"role": "user", "content": PARSE_PROMPT.replace("{raw_text}", raw_text)}],
+        messages=[{"role": "user", "content": (
+            PARSE_PROMPT
+            .replace("{known_movements}", ", ".join(KNOWN_MOVEMENTS))
+            .replace("{known_benchmarks}", ", ".join(KNOWN_BENCHMARKS))
+            .replace("{raw_text}", raw_text))}],
     )
     text = "".join(block.text for block in msg.content if block.type == "text").strip()
     if text.startswith("```"):
         text = text.strip("`")
         text = text.split("\n", 1)[1] if "\n" in text else text
         text = text.rsplit("```", 1)[0]
-    return json.loads(text)
+    return normalize_parsed(json.loads(text))
 
 
 def workout_already_ingested(sb, workout_date: str) -> bool:
@@ -188,6 +362,8 @@ def load_into_supabase(sb, wod: dict, parsed: dict, force: bool = False):
     if not force and workout_already_ingested(sb, wod["workout_date"]):
         existing = sb.table("workouts").select("id").eq("workout_date", wod["workout_date"]).execute()
         return existing.data[0]["id"]
+
+    movement_cache = load_movement_cache(sb)
 
     # Upsert the workout row
     existing = sb.table("workouts").select("id").eq("workout_date", wod["workout_date"]).execute()
@@ -227,12 +403,7 @@ def load_into_supabase(sb, wod: dict, parsed: dict, force: bool = False):
         segment_id = seg_result.data[0]["id"]
 
         for mv in seg.get("movements", []):
-            existing_mv = sb.table("movements").select("id").eq("name", mv["name"]).execute()
-            if existing_mv.data:
-                movement_id = existing_mv.data[0]["id"]
-            else:
-                mv_result = sb.table("movements").insert({"name": mv["name"]}).execute()
-                movement_id = mv_result.data[0]["id"]
+            movement_id = find_or_create_movement(sb, mv["name"], movement_cache)
 
             sb.table("segment_movements").insert({
                 "segment_id": segment_id,

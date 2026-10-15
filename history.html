@@ -161,6 +161,7 @@
     /toes.?to.?bar|t2b/i, /knees.?to.?elbows?|k2e/i, /muscle.?up/i,
     /ring.?dip/i, /\bdip\b/i, /jumping.?jack/i, /double.?under/i, /single.?under/i,
     /rope.?climb/i, /ghd/i,
+    /handstand.?walk/i, /long.?jump/i,
   ];
   const LOADED_OVERRIDE_PATTERNS = [
     /weighted/i, /dumbbell/i, /\bdb\b/i, /barbell/i, /kettlebell/i, /\bkb\b/i, /goblet/i,
@@ -242,9 +243,11 @@
   // ======================= PR ENTRY HELPERS =======================
   // The lifts offered when entering a past personal record.
   const PR_LIFTS = [
-    'Back Squat', 'Bench Press', 'Clean', 'Clean and Jerk', 'Front Squat', 'Overhead Squat',
-    'Power Clean', 'Power Clean and Jerk', 'Power Snatch', 'Push Press', 'Snatch',
-    'Snatch Balance', 'Strict Press', 'Unbroken Wall Balls',
+    'Back Squat', 'Bar Muscle-up', 'Bench Press', 'Clean', 'Clean and Jerk', 'Deadlift', 'Double Under',
+    'Front Squat', 'Havocomplex Clean', 'Havocomplex Snatch', 'Kipping Pull-up', 'Overhead Squat',
+    'Power Clean', 'Power Clean and Jerk', 'Power Snatch', 'Push Press', 'Ring Muscle-up', 'Snatch',
+    'Snatch Balance', 'Strict Handstand Push-up', 'Strict Press', 'Strict Pull-up', 'Thruster',
+    'Turkish Get-up', 'Unbroken Wall Balls', 'Weighted Pull-up',
   ];
   // Workout posts sometimes use a longer name for the same lift ("Full Snatch"). When a
   // record is entered for "Snatch", it should land on the same movement the workouts use,
@@ -255,7 +258,20 @@
     'clean and jerk': ['full clean and jerk', 'squat clean and jerk'],
     'bench press': ['barbell bench press'],
     'strict press': ['shoulder press', 'strict shoulder press'],
+    // plural / hyphen spellings the workout posts might use for the same movement
+    'bar muscle up': ['bar muscle ups'], 'ring muscle up': ['ring muscle ups'],
+    'strict pull up': ['strict pull ups'], 'kipping pull up': ['kipping pull ups'],
+    'strict handstand push up': ['strict handstand push ups'], 'weighted pull up': ['weighted pull ups'],
+    'double under': ['double unders'], 'thruster': ['thrusters'], 'deadlift': ['deadlifts'],
+    'turkish get up': ['turkish get ups', 'tgu'],
+    'havocomplex snatch': ['havoc complex snatch', 'havcomplex snatch'],
+    'havocomplex clean': ['havoc complex clean', 'havcomplex clean'],
   };
+  // A complex (several lifts done back to back without dropping the bar, such as "Havocomplex Snatch")
+  // is scored by ONE number: the heaviest weight completed. So it is a plain PR: no 1RM, no estimate.
+  function isComplexMovement(name) {
+    return /hav(?:oc)?\s*-?\s*c?omplex/i.test(name || '') || /\s\+\s/.test(name || '');
+  }
   function normName(n) {
     return String(n).toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
   }
@@ -444,7 +460,9 @@
       //   actual     = heaviest TRUE single (a lift you really did)
       //   calculated = highest Epley estimate from multi-rep sets (an extrapolation)
       let actualRow = null, calcRow = null, calcVal = null;
+      const complex = isComplexMovement(movementName);   // scored by heaviest weight, whatever the reps
       sessions.forEach(s => {
+        if (complex) { if (s.weight_lbs && (!actualRow || s.weight_lbs > actualRow.weight_lbs)) actualRow = s; return; }
         if (!s.weight_lbs || !s.reps_completed) return;
         if (s.reps_completed === 1) {
           if (!actualRow || s.weight_lbs > actualRow.weight_lbs) actualRow = s;
@@ -454,15 +472,15 @@
         }
       });
       const chartValues = sessions
-        .filter(s => s.weight_lbs && s.reps_completed)
-        .map(s => epley(s.weight_lbs, s.reps_completed));
+        .filter(s => s.weight_lbs && (complex || s.reps_completed))
+        .map(s => (complex ? s.weight_lbs : epley(s.weight_lbs, s.reps_completed)));
 
       if (actualRow) {
         html += `
           <div class="best-card">
-            <div class="best-label">Actual 1RM</div>
+            <div class="best-label">${complex ? 'PR' : 'Actual 1RM'}</div>
             <div class="best-value">${actualRow.weight_lbs} lb</div>
-            <div class="best-sub">1 rep on ${fmtDate(actualRow.logged_at)}</div>
+            <div class="best-sub">${complex ? fmtDate(actualRow.logged_at) : `1 rep on ${fmtDate(actualRow.logged_at)}`}</div>
           </div>`;
       }
       if (calcRow) {
@@ -478,8 +496,8 @@
       }
       html += chartValues.length > 1 ? `<div class="chart-card">${buildLineChartSvg(chartValues)}</div>` : '';
       html += sessionListHtml(sessions, (s) => {
-        const val = `${s.reps_completed ?? '?'} reps @ ${s.weight_lbs ?? '?'} lb`;
-        if (s === actualRow) return { val, isPR: true, prLabel: '1RM PR' };
+        const val = complex ? `${s.weight_lbs ?? '?'} lb` : `${s.reps_completed ?? '?'} reps @ ${s.weight_lbs ?? '?'} lb`;
+        if (s === actualRow) return { val, isPR: true, prLabel: complex ? 'PR' : '1RM PR' };
         if (s === calcRow) return { val, isPR: true, prLabel: 'EST HIGH', est: true };
         return { val, isPR: false };
       });
@@ -523,7 +541,7 @@
       }
       const m = byMovement[id];
       if (r.weight_lbs) {
-        if (r.reps_completed === 1) {
+        if (isComplexMovement(m.name) || r.reps_completed === 1) {   // a complex's record is its heaviest weight
           if (m.actual === null || r.weight_lbs > m.actual) { m.actual = r.weight_lbs; m.actualDate = r.logged_at; }
         } else {
           const est = epley(r.weight_lbs, r.reps_completed);
@@ -541,7 +559,7 @@
 
     const loadedRows = loaded.map(m => {
       const main = m.actual !== null
-        ? `<div class="pr-main">${m.actual} lb</div><div class="pr-sub">actual 1RM · ${fmtDate(m.actualDate)}</div>`
+        ? `<div class="pr-main">${m.actual} lb</div><div class="pr-sub">${isComplexMovement(m.name) ? 'PR' : 'actual 1RM'} · ${fmtDate(m.actualDate)}</div>`
         : `<div class="pr-main none">no actual 1RM yet</div>`;
       const est = m.calc !== null ? `<div class="pr-sub">est. ${Math.round(m.calc)} lb (calculated)</div>` : '';
       return `<div class="pr-row"><div class="pr-name">${esc(m.name)}</div><div class="pr-vals">${main}${est}</div></div>`;
@@ -682,7 +700,7 @@
         });
         if (error) throw error;
         prFlash = weightVal
-          ? `Saved: ${lift} — ${weightVal} lb × ${reps}${reps === 1 ? ' (actual 1RM)' : ''}`
+          ? (isComplexMovement(lift) ? `Saved: ${lift} — ${weightVal} lb (PR)` : `Saved: ${lift} — ${weightVal} lb × ${reps}${reps === 1 ? ' (actual 1RM)' : ''}`)
           : `Saved: ${lift} — ${reps} reps`;
         renderPrBoard();
       } catch (e) {
