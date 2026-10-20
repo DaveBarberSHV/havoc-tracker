@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 17, 2026
+Last updated: Oct 21, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -30,6 +30,8 @@ considered. Add new ideas under the closest heading as they come up.
 - [x] The nightly job matches movements regardless of spelling ("Pull-ups" / "Pull-up"), so variants reuse the existing record instead of creating duplicates
 - [x] The first split Havocomplex Snatch day was repaired by SQL, and the PR recorded correctly
 - [x] Power Total (Back Squat + Bench Press + Deadlift) and CrossFit Total (Back Squat + Strict Press + Deadlift): three lifts done in the SAME session and added together. The total shows on the day (home screen and Day Review, with "First total recorded" / "New Total PR") and the best one is on the Personal Records page. Hand-entered lifts count as one session when they share a date. The nightly job records a total as its three lifts, and "Shoulder Press" is recognized as the Strict Press
+- [x] Bodyweight movements are counted, not weighed: Toes to Rings (and Toes to Bar, T2R/T2B, Knees to Chest/Elbows, Chest to Bar, hanging knee/leg raises, V-ups, wall walks, back extensions, inchworms, jump squats) now show a reps stepper, one at a time. "Weighted" versions still use pounds
+- [x] Day Review shows an "Added weight" box for a bodyweight set that carries a stray weight, so it can be cleared (blank or 0 means none)
 - [x] Home screen: shows the full workout with one button that adapts (Log Today's WOD Results / Continue Logging WOD Results / Review / Edit WOD Results)
 
 **Records and history**
@@ -67,31 +69,33 @@ considered. Add new ideas under the closest heading as they come up.
 - [ ] A simple feedback channel (group text or shared note) so reports don't all route through one person
 - [ ] Resend free tier is 100 emails/day; fine for now, revisit if invites come in waves
 
-### Echo Bike Challenge (charity; real dates Nov 8-21) — BUILT, awaiting real-phone test
-Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and instructions live in the database.
-- [x] Athlete enters calories (the CALORIES box on the monitor); a photo is REQUIRED
-- [x] Date defaults to today, editable, limited to the challenge window (never the future)
-- [x] Athletes see only their own total; no leaderboard; can edit or remove their own counted entries
-- [x] Organizer page (organizer.html) for Anthony and Dave: totals, per-athlete entries with photos, reject/restore with a reason, CSV export
-- [x] Name collected on first use; visible to organizers only
-- [x] Photos shrunk before upload (about 210 KB per entry, so ~146 MB for 700 entries)
-- [x] Private photo storage; organizers and the athlete themselves can see a photo, nobody else
-- [x] Integrity flags for the organizer: same photo used twice, entered days late, entries over 100 calories (a per-challenge setting), and edited entries show the ORIGINAL value ("edited from 94")
-- [x] Leaderboard: rank, name and total. Each athlete chooses "Alice S." or "Anonymous". Ties share a rank; gym-wide total on top; own row highlighted
-- [x] Entries count the moment they are saved. The organizer can reject at any time and totals and the leaderboard update immediately
-- [x] Final standings stay visible for 21 days after the end (a per-challenge setting). Home then shows "Challenge Results" instead of "Log Challenge Progress"
-- [x] "Log Challenge Progress" button on the home screen, only while a challenge is active
-- [ ] Run havoc_challenge_migration.sql, THEN havoc_leaderboard_migration.sql, then deploy index.html and organizer.html
-- [ ] Real-phone test with a few people (camera and photo upload on iPhone) before announcing
-- [ ] Have Anthony sign in once, a few days early (check spam for the sign-in email)
-- [ ] When ready, insert the real Nov 8-21 challenge (the SQL is commented at the bottom of the migration)
-- [ ] After the challenge: export the CSV, then delete the photos
-- [ ] Optional later: AI cross-check of the photo against the typed number, flagging mismatches (about $2 for ~700 photos; needs a small server-side function)
+### Echo Bike Challenge — BUILT AND TESTED, ON HOLD (switched off in the app)
+Anthony postponed the Nov 8-21 challenge. Everything is built, was tested on real phones (including the photo upload), and is parked rather than deleted. It is a reusable "Challenges" feature: the dates, name and instructions live in the database, so the next one needs no new code.
 
-### Ideas to decide
-- [ ] **Estimated 1RM from very high-rep sets.** The Epley formula is only reliable up to about 10 reps, so a set of 15 or 20 gives a nonsense estimate and could trigger an "est. 1RM high" badge. Option: ignore sets over 10 reps when estimating.
-- [ ] **20 Rep Total**: its definition is unclear (the board's weights don't look like one set of 20 back squats). Deliberately NOT interpreted by the app or the nightly job until it's confirmed
-- [ ] Zercher Squat: an unlabeled box on the record board. Nothing to do; it is created automatically if a post uses it
+**What exists (all working, just switched off)**
+- Athletes enter the calories shown on the bike, with a REQUIRED photo; date defaults to today and can be back-dated within the challenge
+- Each athlete sees only their own entries and total; edit or remove their own counted entries
+- Leaderboard: rank, name ("Alice S." or Anonymous, the athlete's choice), total; ties share a rank; gym-wide total; final standings stay up 21 days after the end
+- Organizer page (organizer.html) for Anthony and Dave: totals per athlete, photo thumbnails, reject/restore with a reason, CSV export, and flags for the same photo used twice, entries logged days late, entries over 100 calories, and edits ("edited from 94")
+- Entries count the moment they are saved; the organizer can reject at any time and totals update immediately
+- Photos are shrunk before upload (about 210 KB each) and stored privately; only the athlete and organizers can see them
+- The database rules were tested on a real PostgreSQL (athletes cannot see each other's data or change their own status)
+
+**How to switch it off and on**
+- It is OFF now: `const CHALLENGES_ENABLED = false;` near the top of the script in index.html. While false, the home screen shows no challenge button, no results button and no organizer link, and the app makes no challenge database calls.
+- TO BRING IT BACK:
+  1. In index.html, change that line to `const CHALLENGES_ENABLED = true;`
+  2. Add the new challenge in the Supabase SQL Editor. The template is commented out at the bottom of havoc_challenge_migration.sql (name, instructions, start and end dates). The old test challenge row is harmless.
+  3. Check that the organizers are still on the list (challenge_admins table: prochargedgt@aol.com and dave@safeharbourventures.com)
+  4. Push the change, then do a quick end-to-end test on a phone: log an entry with a photo, see it on the organizer page, reject and restore it
+  5. Make a challenge poster (the old one had Nov 8-21 on it)
+- The database changes were already made (havoc_challenge_migration.sql, then havoc_leaderboard_migration.sql). Do NOT run them again for a new challenge; they only need to exist once. Keep copies of both in the repo (db/ folder) as the record of how the tables were built.
+- Nothing is lost while it is off: test entries and names stay in the database.
+
+**Housekeeping**
+- [ ] Save havoc_challenge_migration.sql and havoc_leaderboard_migration.sql into the repo's db/ folder so the setup lives with the code
+- [ ] When the next challenge is scheduled: follow "TO BRING IT BACK" above
+- [ ] Optional later: AI cross-check of the photo against the typed number, flagging mismatches (about $2 for ~700 photos; needs a small server-side function)
 
 ### Entry app
 - [ ] **Editable reps** for strength sets. Currently locked to the number in the prescribed
@@ -124,12 +128,15 @@ Built inside Havoc Tracker as a reusable "Challenges" feature. Dates, name and i
       The activities table is stubbed. This was the original goal for the whole project.
 
 ### Housekeeping
+- [ ] Save every SQL file (the migrations, havoc_grants.sql and the check_*.sql reports) in the repo's db/ folder, in the order they were run, so the whole database can be rebuilt from the repo
 - [x] Click-test scripts packaged as havoc-tests.zip. Unzip into the repo root (adds tests/ and db/), then `npm install` and `npm test`.
 - [ ] Commit them, so they survive a reset of the working environment (they were lost once)
 
 ---
 
 ## Things worth remembering
+
+- **Supabase changed how new tables work on Oct 30, 2026.** New tables in the public schema are no longer opened to the app automatically. Your existing tables are NOT affected. From now on, any migration that creates a table must include its own grants (copy the pattern in havoc_grants.sql) and the table must be added to that file. If the database is ever rebuilt (a new project, a test copy, a reset), run the schema and every migration, then havoc_grants.sql LAST. check_data_api_access.sql shows, for every table, whether row-level security is on and who can reach it.
 
 - **Corrections to an already-loaded day's structure are done by SQL, not by re-running the job.** The job leaves a loaded day alone so it can never erase people's results.
 - **Never run the nightly job with --force on a day people have logged.** It rebuilds the day's

@@ -285,6 +285,12 @@
   // built-in URL parser (which gives up the moment it sees a leading error= param),
   // we take full manual control: search the raw URL for access_token/refresh_token
   // wherever they appear, and establish the session ourselves if found.
+  // ======================= FEATURE SWITCHES =======================
+  // The Echo Bike Challenge is fully built and tested, but switched off between challenges.
+  // While this is false the home screen shows no challenge button, results button or organizer link.
+  // TO BRING IT BACK: set this to true, add the challenge in the database (see BACKLOG.md), and push.
+  const CHALLENGES_ENABLED = false;
+
   const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { detectSessionInUrl: false }
   });
@@ -371,7 +377,8 @@
     /air.?squat/i, /pistol/i, /squat.?jump/i, /broad.?jump/i, /box.?jump/i,
     /box.?step.?up/i, /step.?up/i, /lunge/i, /ab.?wheel/i,
     /burpee/i, /mountain.?climber/i, /bear.?crawl/i, /ring.?row/i,
-    /toes.?to.?bar|t2b/i, /knees.?to.?elbows?|k2e/i, /muscle.?up/i,
+    /toes.?to.?(?:bar|rings?)|\bt2[br]\b/i, /knees.?to.?(?:elbows?|chest)|\bk2e\b/i, /chest.?to.?bar|\bc2b\b/i, /muscle.?up/i,
+    /hanging.?(?:knee|leg)/i, /leg.?raise/i, /\bv.?ups?\b/i, /wall.?walk/i, /back.?extension/i, /inchworm/i, /jump.?squat/i,
     /ring.?dip/i, /\bdip\b/i, /jumping.?jack/i, /double.?under/i, /single.?under/i,
     /rope.?climb/i, /ghd/i,
     /handstand.?walk/i, /long.?jump/i,   // scored in reps/feet, never pounds
@@ -948,7 +955,7 @@
                  <div class="score-field"><label>Seconds</label><input type="number" id="editSec" value="${(s.duration_seconds || 0) % 60}" min="0" max="59"></div>
                  <div class="score-field"><label>Cal</label><input type="number" id="editCal" value="${s.calories ?? ''}" min="0" placeholder="—"></div>`
               : `<div class="score-field"><label>Reps</label><input type="number" id="editReps" value="${s.reps_completed ?? ''}" min="0"></div>
-                 ${!isBW ? `<div class="score-field"><label>Weight (lb)</label><input type="number" id="editWeight" value="${s.weight_lbs ?? ''}" min="0"></div>` : ''}`;
+                 ${(!isBW || s.weight_lbs) ? `<div class="score-field"><label>${isBW ? 'Added weight (lb)' : 'Weight (lb)'}</label><input type="number" id="editWeight" value="${s.weight_lbs ?? ''}" min="0"></div>` : ''}`;
             html += `
               <div class="review-edit-form">
                 <div class="score-row">
@@ -1128,15 +1135,17 @@
         const notesEl = document.getElementById('editNotes');
         const reps = parseInt(repsEl.value, 10);
         const weight = weightEl ? parseInt(weightEl.value, 10) : null;
+        // For a bodyweight movement, blank or 0 added weight means none at all
+        const noWeight = isNaN(weight) || (isBodyweightMovement(block.movement.name) && weight === 0);
         try {
           const { error } = await sb.from('strength_results').update({
             reps_completed: isNaN(reps) ? setRow.reps_completed : reps,
-            weight_lbs: weightEl ? (isNaN(weight) ? null : weight) : setRow.weight_lbs,
+            weight_lbs: weightEl ? (noWeight ? null : weight) : setRow.weight_lbs,
             notes: notesEl.value.trim() || null,
           }).eq('id', setRow.id);
           if (error) throw error;
           setRow.reps_completed = isNaN(reps) ? setRow.reps_completed : reps;
-          if (weightEl) setRow.weight_lbs = isNaN(weight) ? null : weight;
+          if (weightEl) setRow.weight_lbs = noWeight ? null : weight;
           setRow.notes = notesEl.value.trim() || null;
           state.error = null;
           editingKey = null;
@@ -1694,6 +1703,7 @@
   }
   async function loadChallengeState() {
     state.challenge = null; state.challengeEnded = null; state.challengeTotal = 0; state.challengeRank = null; state.isAdmin = false;
+    if (!CHALLENGES_ENABLED) return;   // switched off: no buttons, no organizer link, and no database calls
     try {
       const today = localDateStr();
       const { data: ch, error } = await sb.from('challenges').select('*')
