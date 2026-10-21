@@ -67,6 +67,9 @@ Rules:
 - The main conditioning piece is segment_type "wod". score_type is "time" for "for time",
   "rounds_reps" for AMRAPs, "reps" for fixed-time max-reps efforts, "calories"/"distance" only
   if the whole piece is scored purely in calories or distance.
+- "N Rounds for Time" (for example "20 Rounds for Time" or "5 RFT") is scored by TIME: score_type "time" and
+  structure_type "for_time". The word "rounds" on its own does NOT mean rounds_reps. Only a workout that says
+  "as many rounds as possible" (an AMRAP) is scored in rounds and reps ("rounds_reps").
 - prescribed_sets should be an integer when explicit (e.g. "Every 1:30 for 10 Sets" -> 10).
 - Keep movement names in consistent Title Case, singular where natural (e.g. "Pull-up").
 - Do not invent information not present in the text.
@@ -260,11 +263,35 @@ def expand_totals(parsed: dict) -> dict:
     return parsed
 
 
+# How a conditioning piece is scored follows from its own words: "for time" is a TIME score, while
+# "as many rounds as possible" (an AMRAP) is scored in rounds and reps. The word "rounds" alone proves nothing
+# ("20 Rounds for Time" is a time workout), so the wording decides, not the model's guess.
+_FOR_TIME = re.compile(r"\bfor\s+time\b|\brft\b|\bas\s+fast\s+as\s+possible\b", re.I)
+_AMRAP = re.compile(r"\bamrap\b|\bas\s+many\s+(?:rounds|reps)\b|\bmax(?:imum)?\s+(?:rounds|reps)\b", re.I)
+
+
+def fix_wod_scoring(parsed: dict) -> dict:
+    """If a conditioning piece says 'for time' (and not AMRAP), it is scored by time. If it says AMRAP (and
+    not 'for time') but was marked as a time score, it is scored in rounds and reps. If a piece says both,
+    it is left exactly as parsed."""
+    for seg in parsed.get("segments", []):
+        if seg.get("segment_type") != "wod":
+            continue
+        text = " ".join(str(x) for x in (seg.get("title"), seg.get("description"), seg.get("notes")) if x)
+        for_time, amrap = bool(_FOR_TIME.search(text)), bool(_AMRAP.search(text))
+        if for_time and not amrap:
+            seg["score_type"], seg["structure_type"] = "time", "for_time"
+        elif amrap and not for_time and seg.get("score_type") == "time":
+            seg["score_type"], seg["structure_type"] = "rounds_reps", "amrap"
+    return parsed
+
+
 def normalize_parsed(parsed: dict) -> dict:
     """Applied to every parse: Havocomplex stays whole, benchmark and movement names use the gym's spelling."""
     for seg in parsed.get("segments", []):
         if seg.get("wod_name"):
             seg["wod_name"] = canonical_benchmark(seg["wod_name"])
+    fix_wod_scoring(parsed)
     collapse_complexes(parsed)
     expand_totals(parsed)
     for seg in parsed.get("segments", []):

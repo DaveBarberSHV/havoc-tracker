@@ -1,6 +1,6 @@
 # Havoc Tracker — Backlog
 
-Last updated: Oct 21, 2026
+Last updated: Oct 22, 2026
 
 Check items off rather than deleting them, so there's a record of what's been
 considered. Add new ideas under the closest heading as they come up.
@@ -32,6 +32,7 @@ considered. Add new ideas under the closest heading as they come up.
 - [x] Power Total (Back Squat + Bench Press + Deadlift) and CrossFit Total (Back Squat + Strict Press + Deadlift): three lifts done in the SAME session and added together. The total shows on the day (home screen and Day Review, with "First total recorded" / "New Total PR") and the best one is on the Personal Records page. Hand-entered lifts count as one session when they share a date. The nightly job records a total as its three lifts, and "Shoulder Press" is recognized as the Strict Press
 - [x] Bodyweight movements are counted, not weighed: Toes to Rings (and Toes to Bar, T2R/T2B, Knees to Chest/Elbows, Chest to Bar, hanging knee/leg raises, V-ups, wall walks, back extensions, inchworms, jump squats) now show a reps stepper, one at a time. "Weighted" versions still use pounds
 - [x] Day Review shows an "Added weight" box for a bodyweight set that carries a stray weight, so it can be cleared (blank or 0 means none)
+- [x] "N Rounds for Time" workouts are scored by time. The parser had read "20 rounds for time" as a rounds-and-reps workout. The nightly job now decides from the workout's own words ("for time" = time score, "as many rounds as possible" = rounds and reps) and leaves anything ambiguous exactly as parsed. Today's mis-scored workout was repaired by SQL (preview, then apply)
 - [x] Home screen: shows the full workout with one button that adapts (Log Today's WOD Results / Continue Logging WOD Results / Review / Edit WOD Results)
 
 **Records and history**
@@ -51,6 +52,7 @@ considered. Add new ideas under the closest heading as they come up.
 ## Open
 
 ### Verify soon
+- [ ] Run QUERY 2 of fix_wod_scoring_preview.sql once to see whether any OLDER workout was scored the wrong way (it only reads). If any show up, they can be fixed the same way
 - [ ] Confirm the first real Havocomplex day after the fix comes through as one movement with no manual repair (the first one was repaired by hand)
 - [ ] Run check_movements.sql to see whether the database already holds duplicate movements (for example "Shoulder Press" next to "Strict Press"), then merge any that exist with a safe SQL fix
 - [ ] **Check the first new workout after the latest deploy.** The WOD description and
@@ -96,6 +98,12 @@ Anthony postponed the Nov 8-21 challenge. Everything is built, was tested on rea
 - [ ] Save havoc_challenge_migration.sql and havoc_leaderboard_migration.sql into the repo's db/ folder so the setup lives with the code
 - [ ] When the next challenge is scheduled: follow "TO BRING IT BACK" above
 - [ ] Optional later: AI cross-check of the photo against the typed number, flagging mismatches (about $2 for ~700 photos; needs a small server-side function)
+
+### Ideas to decide
+- [ ] **Estimated 1RM from very high-rep sets.** The Epley formula is only reliable up to about 10 reps, so a set of 15 or 20 gives a nonsense estimate and could trigger an "est. 1RM high" badge. Option: ignore sets over 10 reps when estimating.
+- [ ] **20 Rep Total**: its definition is unclear (the board's weights don't look like one set of 20 back squats). Deliberately NOT interpreted by the app or the nightly job until it's confirmed
+- [ ] Zercher Squat: an unlabeled box on the record board. Nothing to do; it is created automatically if a post uses it
+- [ ] If the parser gets a workout's scoring wrong again, a small in-app option to score it differently would avoid needing a SQL repair. Not built; the parser safeguard should make this rare
 
 ### Entry app
 - [ ] **Editable reps** for strength sets. Currently locked to the number in the prescribed
